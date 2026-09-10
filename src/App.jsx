@@ -360,6 +360,29 @@ function fmtHours(h) {
   return `${h.toFixed(1)} h`;
 }
 
+// Hourly rate per rank (from the "Hourly Salary by Rank" chart).
+// Chef Sheriff has no listed rate on the chart — assumed 20000 as the next
+// step above Under Sheriff (18000); change this if you have an official value.
+const HOURLY_RATES = {
+  "Chef Sheriff": 20000,
+  "Under Sheriff": 18000,
+  "Assistant Chef": 16000,
+  "Division Chef": 14000,
+  "Major": 12000,
+  "Capitan": 10000,
+  "Lieutnant": 9000,
+  "Sergent": 8000,
+  "Master Deputy": 7000,
+  "Deputy First Class": 6000,
+  "Deputy": 5000,
+};
+function getHourlyRate(rank) {
+  return HOURLY_RATES[rank] || 0;
+}
+function fmtMoney(n) {
+  return `$${Math.round(n || 0).toLocaleString("en-US")}`;
+}
+
 
 function matchesQuery(officer, query) {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -825,15 +848,23 @@ function OfficerPicker({ selectedIds, onChange, multiple = false, placeholder = 
 
 function Dashboard({ profile, openOwnProfile }) {
   const [totalHours, setTotalHours] = useState(0);
+  const [weekHours, setWeekHours] = useState(0);
   const [logsCount, setLogsCount] = useState(0);
   const [opsCount, setOpsCount] = useState(0);
   const [dispatchTotalHours, setDispatchTotalHours] = useState(0);
   const canSeeDispatch = canWriteWantedTest(profile.rank);
+  const hourlyRate = getHourlyRate(profile.rank);
+  const weekSalary = weekHours * hourlyRate;
 
   useEffect(() => {
-    supabase.from("duty_logs").select("duration_hours").eq("officer_id", profile.id)
+    supabase.from("duty_logs").select("duration_hours, work_date").eq("officer_id", profile.id)
       .then(({ data }) => {
-        if (data) { setTotalHours(data.reduce((s, r) => s + Number(r.duration_hours), 0)); setLogsCount(data.length); }
+        if (data) {
+          setTotalHours(data.reduce((s, r) => s + Number(r.duration_hours), 0));
+          setLogsCount(data.length);
+          const weekStart = startOfWeek(Date.now());
+          setWeekHours(data.filter((r) => new Date(r.work_date) >= weekStart).reduce((s, r) => s + Number(r.duration_hours), 0));
+        }
       });
     supabase.from("operations").select("id", { count: "exact", head: true })
       .or(`chief_id.eq.${profile.id},member_ids.cs.{${profile.id}}`)
@@ -855,11 +886,12 @@ function Dashboard({ profile, openOwnProfile }) {
           Your account is currently at the Deputy (read-only) level — you can view everything and log your work hours, but you cannot create operations, wanteds, reports, or leave requests. Please ask the Chief Sheriff to activate your full permissions.
         </div>
       )}
-      <div style={{ ...styles.statsRow, gridTemplateColumns: `repeat(${canSeeDispatch ? 4 : 3}, 1fr)` }}>
+      <div style={{ ...styles.statsRow, gridTemplateColumns: `repeat(${canSeeDispatch ? 5 : 4}, 1fr)` }}>
         <StatCard icon={Clock} label="Total Hours" value={fmtHours(totalHours)} accent />
         <StatCard icon={Shield} label="Number of Logs" value={logsCount} />
         <StatCard icon={Radio} label="Number of Operations" value={opsCount} />
         {canSeeDispatch && <StatCard icon={Headphones} label="Total Dispatch Hours" value={fmtHours(dispatchTotalHours)} />}
+        <StatCard icon={Award} label="Weekly Salary" value={fmtMoney(weekSalary)} accent />
       </div>
       <div style={{ marginTop: 20 }}>
         <button className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={openOwnProfile}>Open Your Profile <ArrowRight size={15} /></button>
@@ -1084,6 +1116,9 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   const weekHours = logs.filter((l) => new Date(l.work_date) >= weekStart).reduce((s, l) => s + Number(l.duration_hours), 0);
   const dispatchTotalHours = dispatchLogs.reduce((s, l) => s + Number(l.duration_hours), 0);
   const dispatchWeekHours = dispatchLogs.filter((l) => new Date(l.work_date) >= weekStart).reduce((s, l) => s + Number(l.duration_hours), 0);
+  const hourlyRate = getHourlyRate(officer?.rank);
+  const weekSalary = weekHours * hourlyRate;
+  const totalSalary = totalHours * hourlyRate;
 
   const resetLogForm = () => {
     setWorkDate(new Date().toISOString().slice(0, 10)); setTimeIn(""); setTimeOut(""); setEditingLogId(null);
@@ -1193,6 +1228,10 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
             <StatCard icon={Clock} label="This Week's Dispatch Hours" value={fmtHours(dispatchWeekHours)} />
           </div>
         )}
+        <div style={{ ...styles.statsRow, gridTemplateColumns: "repeat(2, 1fr)", marginTop: 14 }}>
+          <StatCard icon={Award} label="Weekly Salary" value={fmtMoney(weekSalary)} accent />
+          <StatCard icon={Award} label="Total Salary" value={fmtMoney(totalSalary)} />
+        </div>
       </div>
 
       {iAmChief && !isOwn && (
