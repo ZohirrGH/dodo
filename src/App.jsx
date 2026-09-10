@@ -2078,7 +2078,7 @@ function VacationsView({ me, management, showToast }) {
   const [reason, setReason] = useState("");
 
   const load = useCallback(() => {
-    supabase.from("vacation_requests").select("*, profiles(name, rank)").order("created_at", { ascending: false })
+    supabase.from("vacation_requests").select("*, profiles!vacation_requests_officer_id_fkey(name, rank)").order("created_at", { ascending: false })
       .then(({ data }) => setItems(data || []));
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -2086,14 +2086,42 @@ function VacationsView({ me, management, showToast }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!start || !end) return;
-    const { error } = await supabase.from("vacation_requests").insert({ officer_id: me.id, start_date: start, end_date: end, reason });
-    if (error) { showToast("error", "Failed to submit request"); return; }
-    setStart(""); setEnd(""); setReason(""); load();
+    const { data, error } = await supabase
+      .from("vacation_requests")
+      .insert({ officer_id: me.id, start_date: start, end_date: end, reason })
+      .select("*, profiles!vacation_requests_officer_id_fkey(name, rank)");
+    if (error) {
+      console.error("vacation_requests insert error:", error);
+      showToast("error", error.message || "Failed to submit request");
+      return;
+    }
+    if (!data || data.length === 0) {
+      // Insert reported no error but returned no row — almost always a missing/incorrect
+      // Row Level Security SELECT policy on vacation_requests blocking the return.
+      showToast("error", "Request may not have saved — check permissions");
+      return;
+    }
+    setStart(""); setEnd(""); setReason("");
+    showToast("success", "Vacation request submitted");
+    load();
   };
 
   const setStatus = async (id, status) => {
-    const { error } = await supabase.from("vacation_requests").update({ status, reviewed_by: me.id }).eq("id", id);
-    if (error) { showToast("error", "Failed to update status"); return; }
+    const { data, error } = await supabase
+      .from("vacation_requests")
+      .update({ status, reviewed_by: me.id })
+      .eq("id", id)
+      .select();
+    if (error) {
+      console.error("vacation_requests update error:", error);
+      showToast("error", error.message || "Failed to update status");
+      return;
+    }
+    if (!data || data.length === 0) {
+      showToast("error", "Update may not have saved — check permissions");
+      return;
+    }
+    showToast("success", `Request ${status}`);
     load();
   };
 
