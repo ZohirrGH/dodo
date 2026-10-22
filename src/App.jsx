@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { supabase, usernameToEmail } from "./supabaseClient";
+import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
   Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download,
@@ -10,8 +10,8 @@ import badgeLogo from "./assets/badge-logo.png";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-
 import backgroundVideo from "./assets/background.mp4";
+
 const BACKGROUND_VIDEO_URL = backgroundVideo;
 const BACKGROUND_VIDEO_TYPE = "video/mp4";
 
@@ -402,54 +402,154 @@ export default function SheriffApp() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  // id of the user whose profile fetch has finished (avoids a "Profile not found" flash right after sign-in)
+  const [profileFor, setProfileFor] = useState(null);
   const [view, setView] = useState("dashboard");
   const [viewedProfileId, setViewedProfileId] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState(null);
-  const [authMode, setAuthMode] = useState("login"); 
+  const [authError, setAuthError] = useState(null);
+  // True while we are coming back from Discord (?code=...) and exchanging it for a session
+  const [exchanging, setExchanging] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.has("code") || p.has("error");
+    } catch { return false; }
+  });
 
   const showToast = (type, msg) => {
     setToast({ type, msg });
     setTimeout(() => setToast(null), 2800);
   };
 
+  // 1) Auth listener: subscribe once, ignore token refreshes
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, sess) => {
+      if (event === "TOKEN_REFRESHED") return;
+      setSession(sess);
+      if (!sess) setLoading(false);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // 2) Load profile, keyed on the user id (a string), not the session object
+  const userId = session?.user?.id ?? null;
+
+  const loadProfile = useCallback(async (id) => {
+    const { data, error } = await supabase
+      .from("profiles").select("*").eq("id", id).maybeSingle();
+    if (error) console.error("profile error:", error);
+    setProfile(data ?? null);
+    setProfileFor(id);
+    setLoading(false);
+  }, []);
+
+  // Discord OAuth callback: ?code=...&state=...
   useEffect(() => {
-    if (!session) { setProfile(null); setLoading(false); return; }
-    setLoading(true);
-    supabase.from("profiles").select("*").eq("id", session.user.id).single()
-      .then(({ data, error }) => {
-        if (error) showToast("error", "Failed to load your profile");
-        setProfile(data || null);
-        setLoading(false);
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const oauthError = url.searchParams.get("error");
+    if (!code && !oauthError) return;
+    window.history.replaceState({}, "", url.pathname);
+
+    (async () => {
+      if (oauthError) {
+        // prompt=none fails for members who never approved the app: retry with the normal Discord screen
+        if (["consent_required", "interaction_required", "login_required"].includes(oauthError)) {
+          try { localStorage.removeItem("gx_discord_ok"); } catch { /* ignore */ }
+          startDiscordLogin();
+          return;
+        }
+        setAuthError(GATE_MESSAGES.denied);
+        setExchanging(false);
+        return;
+      }
+
+      let expected = null;
+      try {
+        expected = sessionStorage.getItem("gx_oauth_state");
+        sessionStorage.removeItem("gx_oauth_state");
+      } catch { /* ignore */ }
+      if (!expected || expected !== state) {
+        setAuthError(GATE_MESSAGES.state_mismatch);
+        setExchanging(false);
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("discord-auth", {
+        body: { action: "login", code, redirectUri: oauthRedirectUri() },
       });
-  }, [session]);
+      if (error || !data?.token_hash) {
+        const info = error ? await readFnError(error) : null;
+        setAuthError(GATE_MESSAGES[info?.error] || info?.message || "Sign-in failed. Please try again.");
+        setExchanging(false);
+        return;
+      }
+      const { error: otpErr } = await supabase.auth.verifyOtp({ token_hash: data.token_hash, type: "magiclink" });
+      if (otpErr) {
+        setAuthError("Sign-in failed. Please try again.");
+        setExchanging(false);
+        return;
+      }
+      try { localStorage.setItem("gx_discord_ok", "1"); } catch { /* ignore */ }
+      // exchanging stays true on purpose: the session event takes over from here
+    })();
+  }, []);
+
+  // Load the profile; once per session also re-check the Discord roles on the server
+  const syncedFor = useRef(null);
+  useEffect(() => {
+    if (!userId) { setProfile(null); syncedFor.current = null; return; }
+    loadProfile(userId);          // no setLoading(true): this was unmounting the app
+    if (syncedFor.current === userId) return;
+    syncedFor.current = userId;
+    (async () => {
+      const { error } = await supabase.functions.invoke("discord-auth", { body: { action: "sync" } });
+      if (!error) { loadProfile(userId); return; }   // name / rank may have changed in Discord
+      const info = await readFnError(error);
+      if (info?.error === "no_role" || info?.error === "not_in_server") {
+        setAuthError(GATE_MESSAGES[info.error]);
+        try { sessionStorage.setItem("gx_manual_login", "1"); } catch { /* ignore */ }
+        await supabase.auth.signOut();
+      }
+      // any other error (network, server) is ignored on purpose: don't lock people out on a hiccup
+    })();
+  }, [userId, loadProfile]);
 
   const logout = async () => {
+    try { sessionStorage.setItem("gx_manual_login", "1"); } catch { /* ignore */ }
     await supabase.auth.signOut();
     setView("dashboard");
     setViewedProfileId(null);
   };
 
-  if (loading) {
+  if ((loading && (session || !exchanging)) || (session && !profile && profileFor !== userId)) {
     return (
-      <div style={{ ...styles.page, alignItems: "center", justifyContent: "center", display: "flex" }}>
+      <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <style>{FONTS}</style>
-        <div style={{ color: "#8A8579" }}>Loading...</div>
+        <div style={{ color: "#B9B3A2" }}>Loading...</div>
       </div>
     );
   }
 
-  if (!session || !profile) {
-    return authMode === "login"
-      ? <LoginScreen showToast={showToast} onSwitch={() => setAuthMode("signup")} />
-      : <SignupScreen showToast={showToast} onSwitch={() => setAuthMode("login")} />;
+  // Logged in but no profile row: don't show the login form
+  if (session && !profile) {
+    return (
+      <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+        <style>{FONTS}</style>
+        <div>Profile not found for this account.</div>
+        <button className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={logout}>Sign out</button>
+      </div>
+    );
   }
+
+  if (!session) {
+    let manual = false;
+    try { manual = sessionStorage.getItem("gx_manual_login") === "1"; } catch { /* ignore */ }
+    return <DiscordGate busy={exchanging} error={authError} autoStart={!exchanging && !authError && !manual} />;
+  }
+
 
   const management = isManagement(profile.rank);
 
@@ -680,107 +780,64 @@ function DiscordIcon({ size = 18 }) {
 }
 
 
-function LoginScreen({ showToast, onSwitch }) {
-  const [badge, setBadge] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
+const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID;
+const oauthRedirectUri = () => window.location.origin + window.location.pathname;
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!badge || !password) return;
-    setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: usernameToEmail(badge),
-      password,
-    });
-    setBusy(false);
-    if (error) showToast("error", "wrong badge or password");
-  };
-
-  return (
-    <div style={styles.loginPage}>
-      <style>{FONTS}</style>
-      <div style={styles.loginGrid} />
-      <form className="gx-glass-card gx-fade-up" style={styles.loginCard} onSubmit={submit}>
-        <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
-        <div style={styles.loginTitle}>SHERIFF DEPARTMENT</div>
-        <div style={styles.loginSub}>Login to your account</div>
-        <label style={styles.label}>Badge Number</label>
-        <input style={styles.input} value={badge} onChange={(e) => setBadge(e.target.value)} placeholder="e.g., 835" />
-        <label style={styles.label}>Password</label>
-        <input style={styles.input} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
-        <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, width: "100%", justifyContent: "center", marginTop: 20 }} disabled={busy}>
-          {busy ? "..." : "Login"}
-        </button>
-        <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", marginTop: 10 }} onClick={onSwitch}>
-          Don't have an account? Sign up
-        </button>
-      </form>
-    </div>
-  );
+function startDiscordLogin() {
+  let state = "";
+  try {
+    state = crypto.randomUUID();
+    sessionStorage.setItem("gx_oauth_state", state);
+    sessionStorage.removeItem("gx_manual_login");
+  } catch { /* storage blocked: the state check fails and the person can retry */ }
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    redirect_uri: oauthRedirectUri(),
+    response_type: "code",
+    scope: "identify",
+    state,
+  });
+  // Members who already approved the app skip Discord's consent screen
+  try { if (localStorage.getItem("gx_discord_ok") === "1") params.set("prompt", "none"); } catch { /* ignore */ }
+  window.location.href = `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
+async function readFnError(error) {
+  try { return await error.context.json(); } catch { return null; }
+}
 
-function SignupScreen({ showToast, onSwitch }) {
-  const [name, setName] = useState("");
-  const [badge, setBadge] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
+const GATE_MESSAGES = {
+  not_in_server: "You are not a member of the Discord server.",
+  no_role: "Your Discord account has no role that gives access to this site.",
+  badge_conflict: "Your badge number is already used by another account. Ask an administrator to link your Discord account.",
+  bad_code: "Discord sign-in expired or failed. Please try again.",
+  state_mismatch: "Sign-in could not be verified. Please try again.",
+  denied: "Discord sign-in was cancelled.",
+};
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!name.trim() || !badge.trim() || password.length < 6) {
-      showToast("error", "Please fill in all fields, and ensure your password is at least 6 characters long");
-      return;
-    }
-    setBusy(true);
-    const cleanBadge = badge.trim();
-    const { data, error } = await supabase.auth.signUp({
-      email: usernameToEmail(cleanBadge),
-      password,
-    });
-    if (error) {
-      setBusy(false);
-      showToast("error", error.message.includes("already") ? "This badge number is already in use" : "Failed to create account");
-      return;
-    }
-    if (!data.session) {
-      setBusy(false);
-      showToast("error", "Account created but failed to log in automatically — check Confirm email settings in Supabase");
-      return;
-    }
-    const { error: profileErr } = await supabase.from("profiles").insert({
-      id: data.user.id, username: cleanBadge, badge: cleanBadge, name: name.trim(), rank: "Deputy",
-    });
-    setBusy(false);
-    if (profileErr) {
-      showToast("error", "Failed to complete registration, this badge number may already be in use");
-      return;
-    }
-    showToast("success", "Account created — your account is currently at the Deputy (read-only) level until Chief Sheriff activates it");
-  };
-
+// No login form any more: people are sent straight to Discord.
+// This screen only shows while we wait for Discord, after a sign-out, or when access is refused.
+function DiscordGate({ busy, error, autoStart }) {
+  useEffect(() => { if (autoStart) startDiscordLogin(); }, [autoStart]);
+  const waiting = busy || autoStart;
   return (
     <div style={styles.loginPage}>
       <style>{FONTS}</style>
       <div style={styles.loginGrid} />
-      <form className="gx-glass-card gx-fade-up" style={styles.loginCard} onSubmit={submit}>
+      <div className="gx-glass-card gx-fade-up" style={styles.loginCard}>
         <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
-        <div style={styles.loginTitle}>New Account</div>
-        <div style={styles.loginSub}>Fill in the fields to create your account</div>
-        <label style={styles.label}>Full Name</label>
-        <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., John Doe" />
-        <label style={styles.label}>Badge Number</label>
-        <input style={styles.input} value={badge} onChange={(e) => setBadge(e.target.value)} placeholder="e.g., 835" />
-        <label style={styles.label}>Password</label>
-        <input style={styles.input} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" />
-        <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, width: "100%", justifyContent: "center", marginTop: 20 }} disabled={busy}>
-          {busy ? "..." : "Create Account"}
-        </button>
-        <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", marginTop: 10 }} onClick={onSwitch}>
-          Already have an account? Login
-        </button>
-      </form>
+        <div style={styles.loginTitle}>SHERIFF DEPARTMENT</div>
+        {waiting ? (
+          <div style={styles.loginSub}>Signing you in with Discord...</div>
+        ) : (
+          <>
+            {error && <div style={{ color: "#E0776A", fontSize: 13, margin: "10px 0", textAlign: "center" }}>{error}</div>}
+            <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, width: "100%", justifyContent: "center", marginTop: 16, gap: 8 }} onClick={startDiscordLogin}>
+              <DiscordIcon size={17} /> Login with Discord
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -883,7 +940,7 @@ function Dashboard({ profile, openOwnProfile }) {
       </div>
       {!canWrite(profile.rank) && (
         <div style={styles.readOnlyBanner}>
-          Your account is currently at the Deputy (read-only) level — you can view everything and log your work hours, but you cannot create operations, wanteds, reports, or leave requests. Please ask the Chief Sheriff to activate your full permissions.
+          Your account is currently at the Deputy (read-only) level — you can view everything and log your work hours, but you cannot create operations, wanteds, reports, or leave requests. Your rank follows your Discord role in the server.
         </div>
       )}
       <div style={{ ...styles.statsRow, gridTemplateColumns: `repeat(${canSeeDispatch ? 5 : 4}, 1fr)` }}>
@@ -1063,7 +1120,7 @@ function OfficersView({ showToast, onOpenProfile }) {
         ))}
       </div>
       <div style={{ fontSize: 12, color: "#5A5648", marginTop: 14, textAlign: "center" }}>
-        New accounts are created by officers from the registration page.
+        Accounts are created automatically the first time an officer signs in with Discord.
       </div>
     </div>
   );
