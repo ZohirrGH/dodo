@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
-  Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download,
+  Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt, ChevronLeft,
 } from "lucide-react";
 
 
@@ -310,6 +310,45 @@ textarea:focus-visible,
   flex-shrink: 0;
 }
 
+/* ---- Uniform room: 3D card gallery ---- */
+.gx-uni { position: relative; height: 560px; perspective: 1400px; overflow: hidden; cursor: grab; user-select: none; touch-action: pan-y; }
+.gx-uni:active { cursor: grabbing; }
+.gx-uni-stage { position: absolute; inset: 0; transform-style: preserve-3d; }
+.gx-uni-item { position: absolute; left: 50%; top: 50%; width: 240px; margin-left: -120px; margin-top: -230px;
+  transition: transform .6s cubic-bezier(.22,.8,.25,1), opacity .6s, filter .6s; will-change: transform; }
+.gx-uni-inner { transition: transform .35s cubic-bezier(.22,.8,.25,1); transform-origin: center 40%; }
+.gx-uni-item:hover .gx-uni-inner { transform: scale(1.14); }
+.gx-uni-item:hover { z-index: 100 !important; filter: none !important; opacity: 1 !important; }
+.gx-uni-card { height: 360px; border-radius: 16px; overflow: hidden; background: var(--c);
+  border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+.gx-uni-item.active .gx-uni-card { border-color: var(--gx-gold); box-shadow: 0 0 0 1px var(--gx-gold), 0 0 40px rgba(212,167,44,0.3), 0 20px 40px rgba(0,0,0,0.6); }
+.gx-uni-card img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.gx-uni-ph { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.45)); }
+.gx-uni-ph i { display: block; width: 64px; height: 64px; border-radius: 50%; background: #d9b896; }
+.gx-uni-ph b { display: block; width: 110px; height: 130px; margin-top: -6px; border-radius: 6px; background: #12121a; }
+.gx-uni-label { text-align: center; margin-top: 16px; }
+.gx-uni-name { display: inline-block; font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 18px; letter-spacing: 2px;
+  text-transform: uppercase; color: #fff; padding-bottom: 6px; border-bottom: 2px solid var(--gx-gold); text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
+.gx-uni-code { display: block; width: max-content; margin: 10px auto 0; font-family: Consolas, monospace; font-size: 13px;
+  color: var(--gx-gold-bright); background: rgba(212,167,44,0.1); border: 1px solid rgba(212,167,44,0.45);
+  border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+.gx-uni-code:hover { background: rgba(212,167,44,0.22); }
+.gx-uni-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 200; width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.55); color: #fff; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; }
+.gx-uni-nav:hover { background: rgba(255,255,255,0.15); }
+.gx-uni-dots { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
+.gx-uni-dots span { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; transition: .3s; }
+.gx-uni-dots span.on { background: var(--gx-gold); width: 24px; border-radius: 6px; }
+@media (max-width: 640px) {
+  .gx-uni { height: 520px; }
+  .gx-uni-item { width: 210px; margin-left: -105px; }
+  .gx-uni-card { height: 310px; }
+  .gx-uni-nav { display: none; }
+}
+
+
 `;
 
 const RANKS = [
@@ -338,6 +377,7 @@ const ROOMS = [
   { key: "tests", label: "TEST MDT", icon: Award },
   { key: "vacations", label: "Vacations", icon: Plane },
   { key: "weekly", label: "weekly schedule", icon: Clock },
+  { key: "uniform", label: "uniform", icon: Shirt },
   { key: "activity", label: "activity log", icon: ScrollText },
 ];
 
@@ -401,7 +441,7 @@ function defaultPermsFor(rank) {
   return {
     actions: defaultActionsFor(rank),
     rooms: {
-      dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true,
+      dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true, uniform: true,
       officers: management, weekly: management, dispatch: writeAdvanced, activity: isChief(rank),
     },
   };
@@ -761,6 +801,7 @@ export default function SheriffApp() {
               {currentView === "vacations" && "Vacations"} 
               {currentView === "weekly" && "Weekly Schedule"}
               {currentView === "dispatch" && "Dispatch"}
+              {currentView === "uniform" && "Uniform"}
               {currentView === "activity" && "Activity Log"}
               {currentView === "permissions" && "Permissions"}
             </div>
@@ -779,6 +820,7 @@ export default function SheriffApp() {
             {currentView === "dispatch" && canSeeRoom(profile.rank, "dispatch") && <DispatchView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
             {currentView === "vacations" && canSeeRoom(profile.rank, "vacations") && <VacationsView me={profile} management={management} showToast={showToast} />}
             {currentView === "weekly" && canSeeRoom(profile.rank, "weekly") && <WeeklyTableView me={profile} onOpenProfile={openProfile} />}
+            {currentView === "uniform" && canSeeRoom(profile.rank, "uniform") && <UniformView />}
             {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
             {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
           </div>
@@ -1688,6 +1730,114 @@ function LogRows({ list, emptyMsg, onEdit, onDelete }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Uniform room: one card per rank (in hierarchy order) with the outfit code under the rank name.
+// To change a code or add a picture, edit UNIFORMS below (image = link to the outfit screenshot).
+// ---------------------------------------------------------------------------
+const UNIFORM_COLORS = ["#1d3557", "#5a3a2a", "#3a3a5c", "#4a2f5c", "#2b4a7a", "#1f6b5a", "#6b4a1f", "#7a2f55", "#2f5c4a", "#5c6320", "#6b3a3a", "#2b4a7a"];
+const UNIFORMS = {
+  "Capitan": { code: "s2YMa10BAE", image: "" },
+  "Sergent": { code: "s2YMa10BAE", image: "" },
+  "Deputy First Class": { code: "s2YMa10BAE", image: "" },
+  "Deputy": { code: "6kov4er4Aa", image: "" },
+};
+
+function UniformView() {
+  const [current, setCurrent] = useState(Math.floor(RANKS.length / 2) - 1);
+  const [copied, setCopied] = useState(false);
+  const galleryRef = useRef(null);
+  const [width, setWidth] = useState(900);
+  const drag = useRef({ startX: null, moved: false });
+  const lock = useRef(false);
+  const go = useCallback((i) => setCurrent(Math.max(0, Math.min(RANKS.length - 1, i))), []);
+
+  useEffect(() => {
+    const el = galleryRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (lock.current) return;
+      lock.current = true;
+      setTimeout(() => { lock.current = false; }, 350);
+      setCurrent((c) => Math.max(0, Math.min(RANKS.length - 1, c + ((e.deltaY || e.deltaX) > 0 ? 1 : -1))));
+    };
+    const onResize = () => setWidth(el.clientWidth);
+    onResize();
+    el.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("resize", onResize);
+    return () => { el.removeEventListener("wheel", onWheel); window.removeEventListener("resize", onResize); };
+  }, []);
+
+  const onDown = (e) => { drag.current = { startX: e.clientX, moved: false }; };
+  const onMove = (e) => {
+    const d = drag.current;
+    if (d.startX === null) return;
+    const dx = e.clientX - d.startX;
+    if (Math.abs(dx) > 50) { d.moved = true; go(current + (dx < 0 ? 1 : -1)); d.startX = e.clientX; }
+  };
+  const onUp = () => { const d = drag.current; d.startX = null; setTimeout(() => { d.moved = false; }, 50); };
+
+  const copy = (code) => {
+    try { navigator.clipboard?.writeText(code); } catch { /* ignore */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
+
+  const step = Math.min(250, width * 0.36);
+
+  return (
+    <div>
+      <div style={{ textAlign: "center", opacity: 0.7, fontSize: 13, marginBottom: 4 }}>
+        Scroll, drag or use the arrows. Hover a card to enlarge it. Click a code to copy it.
+      </div>
+      <div className="gx-uni" ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
+        <button className="gx-uni-nav" style={{ left: 8 }} onClick={() => go(current - 1)} aria-label="Previous"><ChevronLeft size={20} /></button>
+        <button className="gx-uni-nav" style={{ right: 8 }} onClick={() => go(current + 1)} aria-label="Next"><ChevronRight size={20} /></button>
+        <div className="gx-uni-stage">
+          {RANKS.map((rank, i) => {
+            const o = i - current;
+            const a = Math.abs(o);
+            const u = UNIFORMS[rank] || {};
+            return (
+              <div
+                key={rank}
+                className={`gx-uni-item${a === 0 ? " active" : ""}`}
+                style={{
+                  transform: `translateX(${o * step}px) translateZ(${-a * 90}px) rotateY(${-o * 16}deg) scale(${a === 0 ? 1.08 : 1})`,
+                  zIndex: 50 - a,
+                  opacity: a > 3 ? 0 : 1 - a * 0.12,
+                  filter: a === 0 ? "none" : `brightness(${1 - a * 0.12})`,
+                  pointerEvents: a > 3 ? "none" : "auto",
+                }}
+                onClick={() => { if (!drag.current.moved) go(i); }}
+              >
+                <div className="gx-uni-inner">
+                  <div className="gx-uni-card" style={{ "--c": UNIFORM_COLORS[i % UNIFORM_COLORS.length] }}>
+                    {u.image
+                      ? <img src={u.image} alt={rank} draggable={false} />
+                      : <div className="gx-uni-ph"><i /><b /></div>}
+                  </div>
+                  <div className="gx-uni-label">
+                    <span className="gx-uni-name">{rank}</span>
+                    {u.code && (
+                      <span className="gx-uni-code" title="Copy code" onClick={(e) => { e.stopPropagation(); copy(u.code); }}>
+                        {copied && a === 0 ? "Copied ✓" : u.code}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="gx-uni-dots">
+        {RANKS.map((r, i) => <span key={r} className={i === current ? "on" : ""} onClick={() => go(i)} />)}
+      </div>
     </div>
   );
 }
