@@ -1759,6 +1759,7 @@ function UniformView() {
   const [width, setWidth] = useState(900);
   const drag = useRef({ startX: null, moved: false });
   const lock = useRef(false);
+  const dragged = useRef(false);
   const go = useCallback((i) => setCurrent(Math.max(0, Math.min(RANKS.length - 1, i))), []);
 
   useEffect(() => {
@@ -1778,21 +1779,19 @@ function UniformView() {
     return () => { el.removeEventListener("wheel", onWheel); window.removeEventListener("resize", onResize); };
   }, []);
 
-  const onDown = (e) => {
-    const item = e.target.closest("[data-uni]");
-    drag.current = { startX: e.clientX, moved: false, idx: item ? Number(item.dataset.uni) : null, onCode: !!e.target.closest(".gx-uni-code") };
+   const onDown = (e) => {
+    dragged.current = false;
+    drag.current = { startX: e.clientX, moved: false, onCode: !!e.target.closest(".gx-uni-code") };
   };
   const onMove = (e) => {
     const d = drag.current;
     if (d.startX === null) return;
     const dx = e.clientX - d.startX;
-    if (Math.abs(dx) > 50) { d.moved = true; go(current + (dx < 0 ? 1 : -1)); d.startX = e.clientX; }
+    if (Math.abs(dx) > 50) { d.moved = true; dragged.current = true; go(current + (dx < 0 ? 1 : -1)); d.startX = e.clientX; }
   };
   // Going to a card is done on release (not on "click"), so it still works while the card is growing under the mouse
-  const onUp = () => {
-    const d = drag.current;
-    if (d.startX !== null && !d.moved && !d.onCode && d.idx !== null && d.idx !== undefined) go(d.idx);
-    drag.current = { startX: null, moved: false, idx: null, onCode: false };
+    const onUp = () => {
+    drag.current = { startX: null, moved: false, onCode: false };
   };
 
   const copy = (code) => {
@@ -1816,7 +1815,7 @@ function UniformView() {
             const a = Math.abs(o);
             const u = UNIFORMS[rank] || {};
             return (
-              <div
+                           <div
                 key={rank}
                 className={`gx-uni-item${a === 0 ? " active" : ""}`}
                 style={{
@@ -1826,6 +1825,7 @@ function UniformView() {
                   filter: a === 0 ? "none" : `brightness(${1 - a * 0.12})`,
                   pointerEvents: a > 3 ? "none" : "auto",
                 }}
+                onClick={() => { if (!dragged.current) go(i); }}
                 data-uni={i}
               >
                 <div className="gx-uni-inner">
