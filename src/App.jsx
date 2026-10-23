@@ -1738,19 +1738,18 @@ const UNIFORM_COLORS = ["#1d3557", "#5a3a2a", "#3a3a5c", "#4a2f5c", "#2b4a7a", "
 // A full link (https://...) works too.
 const uniformImg = (img) => (!img ? "" : /^https?:\/\//.test(img) ? img : `${import.meta.env.BASE_URL}uniforms/${img}`);
 const UNIFORMS = {
-  "Chef Sheriff": { code: "", image: "chef-sheriff.png" },
-  "Under Sheriff": { code: "", image: "under-sheriff.png" },
-  "Management": { code: "", image: "management.png" },
-  "Assistant Chef": { code: "", image: "assistant-chef.png" },
-  "Division Chef": { code: "", image: "division-chef.png" },
-  "Major": { code: "", image: "major.png" },
+  
+  "Division Chef": { code: "DAUNhTjAnA", image: "division-chef.png" },
+  "Major": { code: "q3RCu0NObi", image: "major.png" },
   "Capitan": { code: "s2YMa10BAE", image: "capitan.png" },
-  "Lieutnant": { code: "", image: "lieutnant.png" },
+  "Lieutnant": { code: "9URtq1j0M1", image: "lieutnant.png" },
   "Sergent": { code: "s2YMa10BAE", image: "sergent.png" },
-  "Master Deputy": { code: "", image: "master-deputy.png" },
+  "Master Deputy": { code: "MaNPLXk-N-", image: "master-deputy.png" },
   "Deputy First Class": { code: "s2YMa10BAE", image: "deputy-first-class.png" },
   "Deputy": { code: "6kov4er4Aa", image: "deputy.png" },
 };
+
+const UNIFORM_RANKS = RANKS.filter((r) => UNIFORMS[r]);
 
 function UniformView() {
   const [current, setCurrent] = useState(Math.floor(RANKS.length / 2) - 1);
