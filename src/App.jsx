@@ -326,7 +326,7 @@ const isChief = (rank) => rank === CHIEF_RANK;
 //   caps:  what the rank can do inside the app
 // The settings live in the role_permissions table. Anything not stored there falls back to the
 // defaults below, which reproduce the behaviour the app had before the permissions room existed.
-// NOTE: these settings drive the app only. The database keeps its own row-level-security rules.
+// NOTE: the database enforces the same settings: has_perm() for actions, has_room() for who can read a room's data.
 // ---------------------------------------------------------------------------
 const ROOMS = [
   { key: "dashboard", label: "dashboard", icon: Shield },
@@ -1057,9 +1057,9 @@ function Dashboard({ profile, openOwnProfile }) {
           setWeekHours(data.filter((r) => new Date(r.work_date) >= weekStart).reduce((s, r) => s + Number(r.duration_hours), 0));
         }
       });
-    supabase.from("operations").select("id", { count: "exact", head: true })
-      .or(`chief_id.eq.${profile.id},member_ids.cs.{${profile.id}}`)
-      .then(({ count }) => setOpsCount(count || 0));
+    // Count only (security definer): works even when the Operations room is hidden for this rank
+    supabase.rpc("operations_count", { p_officer: profile.id })
+      .then(({ data }) => setOpsCount(Number(data) || 0));
     if (canSeeDispatch) {
       supabase.from("dispatch_logs").select("duration_hours").eq("officer_id", profile.id)
         .then(({ data }) => setDispatchTotalHours((data || []).reduce((s, r) => s + Number(r.duration_hours), 0)));
@@ -1460,9 +1460,8 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
     } else {
       setDispatchLogs([]);
     }
-    supabase.from("operations").select("id", { count: "exact", head: true })
-      .or(`chief_id.eq.${profileId},member_ids.cs.{${profileId}}`)
-      .then(({ count }) => setOpsCount(count || 0));
+    supabase.rpc("operations_count", { p_officer: profileId })
+      .then(({ data }) => setOpsCount(Number(data) || 0));
     const today = todayStr();
     supabase.from("vacation_requests").select("start_date, end_date").eq("officer_id", profileId).eq("status", "approved")
       .then(({ data }) => setOnVacation((data || []).some((v) => v.start_date <= today && today <= v.end_date)));
