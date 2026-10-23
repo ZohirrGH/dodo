@@ -311,10 +311,10 @@ textarea:focus-visible,
 }
 
 /* ---- Uniform room: 3D card gallery ---- */
-.gx-uni { position: relative; height: 560px; perspective: 1400px; overflow: hidden; cursor: grab; user-select: none; touch-action: pan-y; }
+.gx-uni { position: relative; height: 640px; margin-top: 30px; perspective: 1400px; overflow: hidden; cursor: grab; user-select: none; touch-action: pan-y; }
 .gx-uni:active { cursor: grabbing; }
 .gx-uni-stage { position: absolute; inset: 0; transform-style: preserve-3d; }
-.gx-uni-item { position: absolute; left: 50%; top: 50%; width: 240px; margin-left: -120px; margin-top: -230px;
+.gx-uni-item { position: absolute; left: 50%; top: 50%; width: 240px; margin-left: -120px; margin-top: -190px;
   transition: transform .6s cubic-bezier(.22,.8,.25,1), opacity .6s, filter .6s; will-change: transform; }
 .gx-uni-inner { transition: transform .35s cubic-bezier(.22,.8,.25,1); transform-origin: center 40%; }
 .gx-uni-item:hover .gx-uni-inner { transform: scale(1.14); }
@@ -338,7 +338,7 @@ textarea:focus-visible,
 .gx-uni-dots span { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; transition: .3s; }
 .gx-uni-dots span.on { background: var(--gx-gold); width: 24px; border-radius: 6px; }
 @media (max-width: 640px) {
-  .gx-uni { height: 520px; }
+  .gx-uni { height: 590px; }
   .gx-uni-item { width: 210px; margin-left: -105px; }
   .gx-uni-card { height: 310px; }
 }
