@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
-  Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt, ChevronLeft,
+  Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt,
 } from "lucide-react";
 
 
@@ -334,10 +334,6 @@ textarea:focus-visible,
   color: var(--gx-gold-bright); background: rgba(212,167,44,0.1); border: 1px solid rgba(212,167,44,0.45);
   border-radius: 999px; padding: 4px 14px; cursor: pointer; }
 .gx-uni-code:hover { background: rgba(212,167,44,0.22); }
-.gx-uni-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 200; width: 44px; height: 44px; border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.55); color: #fff; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; }
-.gx-uni-nav:hover { background: rgba(255,255,255,0.15); }
 .gx-uni-dots { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
 .gx-uni-dots span { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; transition: .3s; }
 .gx-uni-dots span.on { background: var(--gx-gold); width: 24px; border-radius: 6px; }
@@ -345,7 +341,6 @@ textarea:focus-visible,
   .gx-uni { height: 520px; }
   .gx-uni-item { width: 210px; margin-left: -105px; }
   .gx-uni-card { height: 310px; }
-  .gx-uni-nav { display: none; }
 }
 
 
@@ -1739,11 +1734,22 @@ function LogRows({ list, emptyMsg, onEdit, onDelete }) {
 // To change a code or add a picture, edit UNIFORMS below (image = link to the outfit screenshot).
 // ---------------------------------------------------------------------------
 const UNIFORM_COLORS = ["#1d3557", "#5a3a2a", "#3a3a5c", "#4a2f5c", "#2b4a7a", "#1f6b5a", "#6b4a1f", "#7a2f55", "#2f5c4a", "#5c6320", "#6b3a3a", "#2b4a7a"];
+// Put the pictures in the public/uniforms/ folder and write just the file name here (e.g. "capitan.png").
+// A full link (https://...) works too.
+const uniformImg = (img) => (!img ? "" : /^https?:\/\//.test(img) ? img : `${import.meta.env.BASE_URL}uniforms/${img}`);
 const UNIFORMS = {
-  "Capitan": { code: "s2YMa10BAE", image: "" },
-  "Sergent": { code: "s2YMa10BAE", image: "" },
-  "Deputy First Class": { code: "s2YMa10BAE", image: "" },
-  "Deputy": { code: "6kov4er4Aa", image: "" },
+  "Chef Sheriff": { code: "", image: "chef-sheriff.png" },
+  "Under Sheriff": { code: "", image: "under-sheriff.png" },
+  "Management": { code: "", image: "management.png" },
+  "Assistant Chef": { code: "", image: "assistant-chef.png" },
+  "Division Chef": { code: "", image: "division-chef.png" },
+  "Major": { code: "", image: "major.png" },
+  "Capitan": { code: "s2YMa10BAE", image: "capitan.png" },
+  "Lieutnant": { code: "", image: "lieutnant.png" },
+  "Sergent": { code: "s2YMa10BAE", image: "sergent.png" },
+  "Master Deputy": { code: "", image: "master-deputy.png" },
+  "Deputy First Class": { code: "s2YMa10BAE", image: "deputy-first-class.png" },
+  "Deputy": { code: "6kov4er4Aa", image: "deputy.png" },
 };
 
 function UniformView() {
@@ -1792,11 +1798,9 @@ function UniformView() {
   return (
     <div>
       <div style={{ textAlign: "center", opacity: 0.7, fontSize: 13, marginBottom: 4 }}>
-        Scroll, drag or use the arrows. Hover a card to enlarge it. Click a code to copy it.
+        Click any card to bring it to the center. Hover to enlarge it. Click a code to copy it.
       </div>
       <div className="gx-uni" ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
-        <button className="gx-uni-nav" style={{ left: 8 }} onClick={() => go(current - 1)} aria-label="Previous"><ChevronLeft size={20} /></button>
-        <button className="gx-uni-nav" style={{ right: 8 }} onClick={() => go(current + 1)} aria-label="Next"><ChevronRight size={20} /></button>
         <div className="gx-uni-stage">
           {RANKS.map((rank, i) => {
             const o = i - current;
@@ -1818,7 +1822,7 @@ function UniformView() {
                 <div className="gx-uni-inner">
                   <div className="gx-uni-card" style={{ "--c": UNIFORM_COLORS[i % UNIFORM_COLORS.length] }}>
                     {u.image
-                      ? <img src={u.image} alt={rank} draggable={false} />
+                      ? <img src={uniformImg(u.image)} alt={rank} draggable={false} onError={(e) => { e.currentTarget.style.display = "none"; }} />
                       : <div className="gx-uni-ph"><i /><b /></div>}
                   </div>
                   <div className="gx-uni-label">
