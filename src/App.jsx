@@ -1752,6 +1752,7 @@ const UNIFORMS = {
 const UNIFORM_RANKS = RANKS.filter((r) => UNIFORMS[r]);
 
 function UniformView() {
+  const RANKS = UNIFORM_RANKS;
   const [current, setCurrent] = useState(Math.floor(RANKS.length / 2) - 1);
   const [copied, setCopied] = useState(false);
   const galleryRef = useRef(null);
