@@ -315,7 +315,7 @@ textarea:focus-visible,
 .gx-uni:active { cursor: grabbing; }
 .gx-uni-stage { position: absolute; inset: 0; transform-style: preserve-3d; }
 .gx-uni-item { position: absolute; left: 50%; top: 50%; width: 240px; margin-left: -120px; margin-top: -190px;
-  transition: transform .6s cubic-bezier(.22,.8,.25,1), opacity .6s, filter .6s; will-change: transform; }
+  transition: transform 1.1s cubic-bezier(.22,.8,.25,1), opacity 1.1s, filter 1.1s; will-change: transform; }
 .gx-uni-inner { transition: transform .35s cubic-bezier(.22,.8,.25,1); transform-origin: center 40%; }
 .gx-uni-item:hover .gx-uni-inner { transform: scale(1.14); }
 .gx-uni-item:hover { z-index: 100 !important; filter: none !important; opacity: 1 !important; }
@@ -1768,7 +1768,7 @@ function UniformView() {
       e.preventDefault();
       if (lock.current) return;
       lock.current = true;
-      setTimeout(() => { lock.current = false; }, 350);
+      setTimeout(() => { lock.current = false; }, 700);
       setCurrent((c) => Math.max(0, Math.min(RANKS.length - 1, c + ((e.deltaY || e.deltaX) > 0 ? 1 : -1))));
     };
     const onResize = () => setWidth(el.clientWidth);
@@ -1778,14 +1778,22 @@ function UniformView() {
     return () => { el.removeEventListener("wheel", onWheel); window.removeEventListener("resize", onResize); };
   }, []);
 
-  const onDown = (e) => { drag.current = { startX: e.clientX, moved: false }; };
+  const onDown = (e) => {
+    const item = e.target.closest("[data-uni]");
+    drag.current = { startX: e.clientX, moved: false, idx: item ? Number(item.dataset.uni) : null, onCode: !!e.target.closest(".gx-uni-code") };
+  };
   const onMove = (e) => {
     const d = drag.current;
     if (d.startX === null) return;
     const dx = e.clientX - d.startX;
     if (Math.abs(dx) > 50) { d.moved = true; go(current + (dx < 0 ? 1 : -1)); d.startX = e.clientX; }
   };
-  const onUp = () => { const d = drag.current; d.startX = null; setTimeout(() => { d.moved = false; }, 50); };
+  // Going to a card is done on release (not on "click"), so it still works while the card is growing under the mouse
+  const onUp = () => {
+    const d = drag.current;
+    if (d.startX !== null && !d.moved && !d.onCode && d.idx !== null && d.idx !== undefined) go(d.idx);
+    drag.current = { startX: null, moved: false, idx: null, onCode: false };
+  };
 
   const copy = (code) => {
     try { navigator.clipboard?.writeText(code); } catch { /* ignore */ }
@@ -1797,10 +1805,11 @@ function UniformView() {
 
   return (
     <div>
+      <h2 style={{ textAlign: "center", fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: 34, letterSpacing: 4, textTransform: "uppercase", margin: "6px 0 8px", color: "#F4C744", textShadow: "0 2px 14px rgba(0,0,0,0.7)" }}>Sheriff Uniform</h2>
       <div style={{ textAlign: "center", opacity: 0.7, fontSize: 13, marginBottom: 4 }}>
         Click any card to bring it to the center. Hover to enlarge it. Click a code to copy it.
       </div>
-      <div className="gx-uni" ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
+      <div className="gx-uni" ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { drag.current = { startX: null, moved: false, idx: null, onCode: false }; }}>
         <div className="gx-uni-stage">
           {RANKS.map((rank, i) => {
             const o = i - current;
@@ -1817,7 +1826,7 @@ function UniformView() {
                   filter: a === 0 ? "none" : `brightness(${1 - a * 0.12})`,
                   pointerEvents: a > 3 ? "none" : "auto",
                 }}
-                onClick={() => { if (!drag.current.moved) go(i); }}
+                data-uni={i}
               >
                 <div className="gx-uni-inner">
                   <div className="gx-uni-card" style={{ "--c": UNIFORM_COLORS[i % UNIFORM_COLORS.length] }}>
