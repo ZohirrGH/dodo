@@ -341,22 +341,65 @@ const ROOMS = [
   { key: "activity", label: "activity log", icon: ScrollText },
 ];
 
-const CAPS = [
-  { key: "management", label: "Management powers", hint: "Review vacation requests, edit or delete any operation, use officer tools" },
-  { key: "write", label: "Create operations and vacation requests", hint: "Everything below Deputy by default" },
-  { key: "writeAdvanced", label: "Create wanted, tests and dispatch entries", hint: "Master Deputy and above by default" },
+// What a rank can do inside each room. "their own" = records the person created (or their own logs),
+// "anyone's" = records created by somebody else. The database enforces the same switches.
+const ACTION_GROUPS = [
+  { room: "operations", label: "Operations", icon: Radio, actions: [
+    { key: "create", label: "Create operations" },
+    { key: "edit_own", label: "Edit their own operations" },
+    { key: "edit_all", label: "Edit anyone's operations" },
+    { key: "delete_own", label: "Delete their own operations" },
+    { key: "delete_all", label: "Delete anyone's operations" },
+  ] },
+  { room: "wanted", label: "Wanted", icon: Search, actions: [
+    { key: "create", label: "Add wanted persons" },
+    { key: "edit_own", label: "Edit their own entries" },
+    { key: "edit_all", label: "Edit anyone's entries" },
+    { key: "delete_own", label: "Delete their own entries" },
+    { key: "delete_all", label: "Delete anyone's entries" },
+  ] },
+  { room: "tests", label: "TEST MDT", icon: Award, actions: [
+    { key: "create", label: "Add tests" },
+    { key: "edit_own", label: "Edit their own tests" },
+    { key: "edit_all", label: "Edit anyone's tests" },
+    { key: "delete_own", label: "Delete their own tests" },
+    { key: "delete_all", label: "Delete anyone's tests" },
+  ] },
+  { room: "dispatch", label: "Dispatch", icon: Headphones, actions: [
+    { key: "create", label: "Submit dispatch logs" },
+    { key: "edit_own", label: "Edit their own logs" },
+    { key: "delete_own", label: "Delete their own logs" },
+  ] },
+  { room: "vacations", label: "Vacations", icon: Plane, actions: [
+    { key: "create", label: "Submit vacation requests" },
+    { key: "review", label: "See every request and accept / reject", hint: "Without this, an officer only sees their own requests" },
+  ] },
 ];
 
 const DEFAULT_MANAGEMENT_RANKS = [
   "Chef Sheriff", "Under Sheriff", "Management", "Assistant Chef", "Division Chef", "Major", "Capitan", "Lieutnant",
 ];
 
-function defaultPermsFor(rank) {
+function defaultActionsFor(rank) {
   const management = DEFAULT_MANAGEMENT_RANKS.includes(rank);
   const write = rank !== "Deputy";
+  const advanced = !["Deputy", "Deputy First Class"].includes(rank);
+  const chief = isChief(rank);
+  const records = (create, any) => ({ create, edit_own: true, edit_all: any, delete_own: true, delete_all: any });
+  return {
+    operations: records(write, management),
+    wanted: records(advanced, chief),
+    tests: records(advanced, chief),
+    dispatch: records(advanced, chief),
+    vacations: { create: write, review: management },
+  };
+}
+
+function defaultPermsFor(rank) {
+  const management = DEFAULT_MANAGEMENT_RANKS.includes(rank);
   const writeAdvanced = !["Deputy", "Deputy First Class"].includes(rank);
   return {
-    caps: { management, write, writeAdvanced },
+    actions: defaultActionsFor(rank),
     rooms: {
       dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true,
       officers: management, weekly: management, dispatch: writeAdvanced, activity: isChief(rank),
@@ -368,7 +411,7 @@ function defaultPermsFor(rank) {
 let PERMS = {};
 const applyPerms = (rows) => {
   const next = {};
-  (rows || []).forEach((r) => { next[r.rank] = { caps: r.caps || {}, rooms: r.rooms || {} }; });
+  (rows || []).forEach((r) => { next[r.rank] = { rooms: r.rooms || {}, actions: r.actions || {} }; });
   PERMS = next;
 };
 const setRankPerms = (rank, perms) => { PERMS = { ...PERMS, [rank]: perms }; };
@@ -378,20 +421,21 @@ function getPerms(rank) {
   // The Chef Sheriff is never locked out of anything, whatever is stored
   if (isChief(rank)) {
     return {
-      caps: Object.fromEntries(CAPS.map((c) => [c.key, true])),
+      actions: Object.fromEntries(Object.entries(base.actions).map(([room, a]) => [room, Object.fromEntries(Object.keys(a).map((k) => [k, true]))])),
       rooms: Object.fromEntries(ROOMS.map((r) => [r.key, true])),
     };
   }
   const saved = PERMS[rank];
-  return {
-    caps: { ...base.caps, ...(saved?.caps || {}) },
-    rooms: { ...base.rooms, ...(saved?.rooms || {}) },
-  };
+  const actions = {};
+  Object.keys(base.actions).forEach((room) => {
+    actions[room] = { ...base.actions[room], ...(saved?.actions?.[room] || {}) };
+  });
+  return { actions, rooms: { ...base.rooms, ...(saved?.rooms || {}) } };
 }
 
-const isManagement = (rank) => !!getPerms(rank).caps.management;
-const canWrite = (rank) => !!getPerms(rank).caps.write;
-const canWriteWantedTest = (rank) => !!getPerms(rank).caps.writeAdvanced;
+const can = (rank, room, action) => !!getPerms(rank).actions[room]?.[action];
+const canEditItem = (me, room, ownerId) => can(me.rank, room, "edit_all") || (ownerId === me.id && can(me.rank, room, "edit_own"));
+const canDeleteItem = (me, room, ownerId) => can(me.rank, room, "delete_all") || (ownerId === me.id && can(me.rank, room, "delete_own"));
 const canSeeRoom = (rank, key) => !!getPerms(rank).rooms[key];
 
 function startOfWeek(ts) {
@@ -521,7 +565,7 @@ export default function SheriffApp() {
   // Role permissions (rooms + capabilities per rank). On any failure we keep the built-in defaults.
   const loadPerms = useCallback(async (id) => {
     try {
-      const { data, error } = await supabase.from("role_permissions").select("rank, rooms, caps");
+      const { data, error } = await supabase.from("role_permissions").select("rank, rooms, actions");
       if (error) console.error("permissions error:", error);
       else applyPerms(data);
     } catch (e) {
@@ -642,7 +686,7 @@ export default function SheriffApp() {
   }
 
 
-  const management = isManagement(profile.rank);
+  const management = can(profile.rank, "vacations", "review");
 
   // Rooms in the side menu come from the role permissions; the permissions room is always Chef Sheriff only
   const navItems = [
@@ -999,7 +1043,7 @@ function Dashboard({ profile, openOwnProfile }) {
   const [logsCount, setLogsCount] = useState(0);
   const [opsCount, setOpsCount] = useState(0);
   const [dispatchTotalHours, setDispatchTotalHours] = useState(0);
-  const canSeeDispatch = canWriteWantedTest(profile.rank);
+  const canSeeDispatch = canSeeRoom(profile.rank, "dispatch");
   const hourlyRate = getHourlyRate(profile.rank);
   const weekSalary = weekHours * hourlyRate;
 
@@ -1028,7 +1072,7 @@ function Dashboard({ profile, openOwnProfile }) {
         <div style={styles.greetingTitle}>Hello, {profile.name}</div>
         <div style={styles.greetingSub}>{profile.rank} · Badge #{profile.badge}</div>
       </div>
-      {!canWrite(profile.rank) && (
+      {!["operations", "wanted", "tests", "vacations"].some((room) => can(profile.rank, room, "create")) && (
         <div style={styles.readOnlyBanner}>
           Your account is currently at the Deputy (read-only) level — you can view everything and log your work hours, but you cannot create operations, wanteds, reports, or leave requests. Your rank follows your Discord role in the server.
         </div>
@@ -1118,6 +1162,12 @@ function PermissionsView({ me, showToast, onSaved }) {
     setDirty(true);
   };
 
+  const toggleAction = (room, key) => {
+    if (locked) return;
+    setDraft((d) => ({ ...d, actions: { ...d.actions, [room]: { ...d.actions[room], [key]: !d.actions[room]?.[key] } } }));
+    setDirty(true);
+  };
+
   const resetToDefaults = () => {
     if (locked) return;
     setDraft(defaultPermsFor(selected));
@@ -1130,7 +1180,7 @@ function PermissionsView({ me, showToast, onSaved }) {
     const row = {
       rank: selected,
       rooms: draft.rooms,
-      caps: draft.caps,
+      actions: draft.actions,
       updated_at: new Date().toISOString(),
       updated_by: me.id,
     };
@@ -1141,7 +1191,7 @@ function PermissionsView({ me, showToast, onSaved }) {
       showToast("error", "Could not save the permissions");
       return;
     }
-    setRankPerms(selected, { rooms: draft.rooms, caps: draft.caps });
+    setRankPerms(selected, { rooms: draft.rooms, actions: draft.actions });
     setDirty(false);
     onSaved && onSaved();
     showToast("success", `Permissions saved for ${selected}`);
@@ -1168,7 +1218,7 @@ function PermissionsView({ me, showToast, onSaved }) {
         <div style={{ color: "#8A8579", fontSize: 12, marginTop: 6, lineHeight: 1.6 }}>
           {locked
             ? "The Chef Sheriff always has every room and every permission, so this rank cannot be locked out."
-            : "These settings control what this rank sees and can do inside the app. The database keeps its own limits, so giving a rank an action it could not do before may still be refused by the server."}
+            : "These settings control what this rank sees and can do. The server enforces the same switches, so a change here applies everywhere the moment you save."}
         </div>
 
         <div style={{ ...styles.label, marginTop: 20 }}>Rooms (side menu)</div>
@@ -1187,23 +1237,31 @@ function PermissionsView({ me, showToast, onSaved }) {
           ))}
         </div>
 
-        <div style={{ ...styles.label, marginTop: 20 }}>Permissions</div>
-        <div style={styles.rankList}>
-          {CAPS.map((cap) => (
-            <div key={cap.key} style={styles.rankRow}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={styles.miniName}>{cap.label}</div>
-                <div style={{ color: "#8A8579", fontSize: 11, marginTop: 2 }}>{cap.hint}</div>
-              </div>
-              <Toggle
-                on={!!draft.caps[cap.key]}
-                disabled={locked}
-                label={`${cap.label} for ${selected}`}
-                onClick={() => toggle("caps", cap.key)}
-              />
+        <div style={{ ...styles.label, marginTop: 20 }}>What this rank can do inside each room</div>
+        {ACTION_GROUPS.map((g) => (
+          <div key={g.room} style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <g.icon size={15} strokeWidth={1.8} color="#D4A72C" />
+              <div style={{ ...styles.miniName, color: "#D4A72C" }}>{g.label}</div>
             </div>
-          ))}
-        </div>
+            <div style={styles.rankList}>
+              {g.actions.map((a) => (
+                <div key={a.key} style={styles.rankRow}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={styles.miniName}>{a.label}</div>
+                    {a.hint && <div style={{ color: "#8A8579", fontSize: 11, marginTop: 2 }}>{a.hint}</div>}
+                  </div>
+                  <Toggle
+                    on={!!draft.actions[g.room]?.[a.key]}
+                    disabled={locked}
+                    label={`${a.label} for ${selected}`}
+                    onClick={() => toggleAction(g.room, a.key)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
 
         {!locked && (
           <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
@@ -1387,7 +1445,7 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   const [editingLogId, setEditingLogId] = useState(null);
   const isOwn = profileId === me.id;
   const iAmChief = isChief(me.rank);
-  const canSeeDispatch = canWriteWantedTest(me.rank);
+  const canSeeDispatch = canSeeRoom(me.rank, "dispatch");
 
   const load = useCallback(() => {
     supabase.from("profiles").select("*").eq("id", profileId).single().then(({ data }) => {
@@ -1883,7 +1941,6 @@ function OperationsView({ me, showToast, onOpenProfile }) {
   const [officersById, setOfficersById] = useState({});
   const [editingId, setEditingId] = useState(null);
 
-  const management = isManagement(me.rank);
 
   const load = useCallback(() => {
     supabase.from("operations").select("*").order("created_at", { ascending: false }).then(({ data }) => setItems(data || []));
@@ -1965,7 +2022,7 @@ function OperationsView({ me, showToast, onOpenProfile }) {
     <div style={styles.content}>
       <div className="gx-glass-card" style={styles.sectionCard}>
         <div style={styles.sectionHeader}>{editingId ? "Edit Operation" : "New Operation"}</div>
-        {!canWrite(me.rank) ? (
+        {!can(me.rank, "operations", "create") ? (
           <div style={styles.emptyState}>Your account has read-only access, you cannot add operations at the moment.</div>
         ) : (
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2009,7 +2066,8 @@ function OperationsView({ me, showToast, onOpenProfile }) {
         <div style={styles.sectionHeader}>List</div>
         {items.length === 0 ? <div style={styles.emptyState}>No operations available</div> : items.map((it) => {
           const chief = officersById[it.chief_id];
-          const canManage = management || it.created_by === me.id;
+          const canEdit = canEditItem(me, "operations", it.created_by);
+          const canDelete = canDeleteItem(me, "operations", it.created_by);
           return (
             <div key={it.id} className="gx-glass-card gx-record-card">
               <div className="gx-record-header">
@@ -2019,10 +2077,10 @@ function OperationsView({ me, showToast, onOpenProfile }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   {it.result && <span className="gx-tag gx-tag-gold">{it.result}</span>}
-                  {canManage && (
+                  {(canEdit || canDelete) && (
                     <div style={{ display: "flex", gap: 6 }}>
-                      <button style={styles.iconBtnSmall} onClick={() => startEdit(it)} aria-label="Edit operation" title="Edit">✎</button>
-                      <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteOp(it.id)} aria-label="Delete operation" title="Delete">✕</button>
+                      {canEdit && <button style={styles.iconBtnSmall} onClick={() => startEdit(it)} aria-label="Edit operation" title="Edit">✎</button>}
+                      {canDelete && <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteOp(it.id)} aria-label="Delete operation" title="Delete">✕</button>}
                     </div>
                   )}
                 </div>
@@ -2138,7 +2196,7 @@ function WantedView({ me, showToast, onOpenProfile }) {
     <div style={styles.content}>
       <div className="gx-glass-card" style={styles.sectionCard}>
         <div style={styles.sectionHeader}>{editingId ? "Edit Wanted Person" : "Add Wanted Person"}</div>
-        {!canWriteWantedTest(me.rank) ? (
+        {!can(me.rank, "wanted", "create") ? (
           <div style={styles.emptyState}>Only Master Deputy and above can add wanted persons. You can view the list.</div>
         ) : (
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2186,7 +2244,8 @@ function WantedView({ me, showToast, onOpenProfile }) {
       <div className="gx-glass-card" style={{ ...styles.sectionCard, marginTop: 16 }}>
         <div style={styles.sectionHeader}>List</div>
         {items.length === 0 ? <div style={styles.emptyState}>No wanted persons found</div> : items.map((it) => {
-          const canManage = isChief(me.rank) || it.created_by === me.id;
+          const canEdit = canEditItem(me, "wanted", it.created_by);
+          const canDelete = canDeleteItem(me, "wanted", it.created_by);
           return (
             <div key={it.id} className="gx-glass-card gx-record-card gx-record-danger">
               <div className="gx-record-header">
@@ -2199,10 +2258,10 @@ function WantedView({ me, showToast, onOpenProfile }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="gx-tag gx-tag-danger">{it.status || "wanted"}</span>
-                  {canManage && (
+                  {(canEdit || canDelete) && (
                     <div style={{ display: "flex", gap: 6 }}>
-                      <button style={styles.iconBtnSmall} onClick={() => startEdit(it)} aria-label="Edit wanted person" title="Edit">✎</button>
-                      <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteItem(it.id)} aria-label="Delete wanted person" title="Delete">✕</button>
+                      {canEdit && <button style={styles.iconBtnSmall} onClick={() => startEdit(it)} aria-label="Edit wanted person" title="Edit">✎</button>}
+                      {canDelete && <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteItem(it.id)} aria-label="Delete wanted person" title="Delete">✕</button>}
                     </div>
                   )}
                 </div>
@@ -2329,7 +2388,7 @@ function TestsView({ me, showToast, onOpenProfile }) {
     <div style={styles.content}>
       <div className="gx-glass-card" style={styles.sectionCard}>
         <div style={styles.sectionHeader}>{editingId ? "Edit Test" : "New Test"}</div>
-        {!canWriteWantedTest(me.rank) ? (
+        {!can(me.rank, "tests", "create") ? (
           <div style={styles.emptyState}>Only Master Deputies and above can add tests. You can view the list.</div>
         ) : (
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2366,7 +2425,8 @@ function TestsView({ me, showToast, onOpenProfile }) {
         {items.length === 0 ? <div style={styles.emptyState}>No tests available</div> : items.map((it) => {
           const officer = officersById[it.officer_id];
           const tester = officersById[it.tested_by];
-          const canManage = isChief(me.rank) || it.created_by === me.id;
+          const canEdit = canEditItem(me, "tests", it.created_by);
+          const canDelete = canDeleteItem(me, "tests", it.created_by);
           return (
             <div key={it.id} className={`gx-glass-card gx-record-card ${Number(it.score) >= 5 ? "gx-record-success" : "gx-record-danger"}`}>
               <div className="gx-record-header">
@@ -2378,10 +2438,10 @@ function TestsView({ me, showToast, onOpenProfile }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className={`gx-tag ${Number(it.score) >= 5 ? "gx-tag-success" : "gx-tag-danger"}`}>{Number(it.score) >= 5 ? "Pass" : "Fail"}</span>
-                  {canManage && (
+                  {(canEdit || canDelete) && (
                     <div style={{ display: "flex", gap: 6 }}>
-                      <button style={styles.iconBtnSmall} onClick={() => startEdit(it)} aria-label="Edit test" title="Edit">✎</button>
-                      <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteTest(it.id)} aria-label="Delete test" title="Delete">✕</button>
+                      {canEdit && <button style={styles.iconBtnSmall} onClick={() => startEdit(it)} aria-label="Edit test" title="Edit">✎</button>}
+                      {canDelete && <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteTest(it.id)} aria-label="Delete test" title="Delete">✕</button>}
                     </div>
                   )}
                 </div>
@@ -2468,7 +2528,7 @@ function VacationsView({ me, management, showToast }) {
     <div style={styles.content}>
       <div className="gx-glass-card" style={styles.sectionCard}>
         <div style={styles.sectionHeader}>New Vacation Request</div>
-        {!canWrite(me.rank) ? (
+        {!can(me.rank, "vacations", "create") ? (
           <div style={styles.emptyState}>Your account has read-only access, you cannot submit a vacation request at this time.</div>
         ) : (
         <form onSubmit={submit} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -2590,7 +2650,7 @@ function DispatchView({ me, showToast, onOpenProfile }) {
 
       <div className="gx-glass-card" style={styles.sectionCard}>
         <div style={styles.sectionHeader}>{editingId ? "Edit Log" : "Submit Dispatch Time"}</div>
-        {!canWriteWantedTest(me.rank) ? (
+        {!can(me.rank, "dispatch", "create") ? (
           <div style={styles.emptyState}>You are not authorized to submit dispatch logs.</div>
         ) : (
         <form onSubmit={submit} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
@@ -2625,10 +2685,12 @@ function DispatchView({ me, showToast, onOpenProfile }) {
                 <div style={{ flex: 1 }}>{it.work_date}</div>
                 <div style={{ flex: 1, color: "#8A8579" }}>{it.time_in} → {it.time_out}</div>
                 <div style={styles.rankHours}>{fmtHours(Number(it.duration_hours))}</div>
-                <div style={{ display: "flex", gap: 6, marginRight: 8 }}>
-                  <button style={styles.iconBtnSmall} onClick={() => startEdit(it)}>✎</button>
-                  <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteItem(it.id)}>✕</button>
-                </div>
+                {(can(me.rank, "dispatch", "edit_own") || can(me.rank, "dispatch", "delete_own")) && (
+                  <div style={{ display: "flex", gap: 6, marginRight: 8 }}>
+                    {can(me.rank, "dispatch", "edit_own") && <button style={styles.iconBtnSmall} onClick={() => startEdit(it)}>✎</button>}
+                    {can(me.rank, "dispatch", "delete_own") && <button style={{ ...styles.iconBtnSmall, color: "#E0776A" }} onClick={() => deleteItem(it.id)}>✕</button>}
+                  </div>
+                )}
               </div>
             ))}
           </div>
