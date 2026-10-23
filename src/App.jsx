@@ -313,15 +313,86 @@ textarea:focus-visible,
 `;
 
 const RANKS = [
-  "Chef Sheriff", "Under Sheriff", "Assistant Chef", "Division Chef", "Major",
+  "Chef Sheriff", "Under Sheriff", "Management", "Assistant Chef", "Division Chef", "Major",
   "Capitan", "Lieutnant", "Sergent", "Master Deputy", "Deputy First Class", "Deputy",
 ];
-const MANAGEMENT_RANKS = ["Chef Sheriff", "Under Sheriff", "Assistant Chef", "Division Chef", "Major", "Capitan", "Lieutnant"];
 const CHIEF_RANK = "Chef Sheriff";
-const isManagement = (rank) => MANAGEMENT_RANKS.includes(rank);
 const isChief = (rank) => rank === CHIEF_RANK;
-const canWrite = (rank) => rank !== "Deputy";
-const canWriteWantedTest = (rank) => !["Deputy", "Deputy First Class"].includes(rank);
+
+// ---------------------------------------------------------------------------
+// Permissions
+// Every rank has two things the Chef Sheriff can change from the "permissions" room:
+//   rooms: which pages of the side menu the rank can see
+//   caps:  what the rank can do inside the app
+// The settings live in the role_permissions table. Anything not stored there falls back to the
+// defaults below, which reproduce the behaviour the app had before the permissions room existed.
+// NOTE: these settings drive the app only. The database keeps its own row-level-security rules.
+// ---------------------------------------------------------------------------
+const ROOMS = [
+  { key: "dashboard", label: "dashboard", icon: Shield },
+  { key: "leaderboard", label: "leaderboard", icon: Trophy },
+  { key: "officers", label: "officers", icon: Users },
+  { key: "operations", label: "Operations", icon: Radio },
+  { key: "wanted", label: "Wanted", icon: Search },
+  { key: "dispatch", label: "Dispatch", icon: Headphones },
+  { key: "tests", label: "TEST MDT", icon: Award },
+  { key: "vacations", label: "Vacations", icon: Plane },
+  { key: "weekly", label: "weekly schedule", icon: Clock },
+  { key: "activity", label: "activity log", icon: ScrollText },
+];
+
+const CAPS = [
+  { key: "management", label: "Management powers", hint: "Review vacation requests, edit or delete any operation, use officer tools" },
+  { key: "write", label: "Create operations and vacation requests", hint: "Everything below Deputy by default" },
+  { key: "writeAdvanced", label: "Create wanted, tests and dispatch entries", hint: "Master Deputy and above by default" },
+];
+
+const DEFAULT_MANAGEMENT_RANKS = [
+  "Chef Sheriff", "Under Sheriff", "Management", "Assistant Chef", "Division Chef", "Major", "Capitan", "Lieutnant",
+];
+
+function defaultPermsFor(rank) {
+  const management = DEFAULT_MANAGEMENT_RANKS.includes(rank);
+  const write = rank !== "Deputy";
+  const writeAdvanced = !["Deputy", "Deputy First Class"].includes(rank);
+  return {
+    caps: { management, write, writeAdvanced },
+    rooms: {
+      dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true,
+      officers: management, weekly: management, dispatch: writeAdvanced, activity: isChief(rank),
+    },
+  };
+}
+
+// Saved settings, keyed by rank. Filled from the database right after sign-in.
+let PERMS = {};
+const applyPerms = (rows) => {
+  const next = {};
+  (rows || []).forEach((r) => { next[r.rank] = { caps: r.caps || {}, rooms: r.rooms || {} }; });
+  PERMS = next;
+};
+const setRankPerms = (rank, perms) => { PERMS = { ...PERMS, [rank]: perms }; };
+
+function getPerms(rank) {
+  const base = defaultPermsFor(rank);
+  // The Chef Sheriff is never locked out of anything, whatever is stored
+  if (isChief(rank)) {
+    return {
+      caps: Object.fromEntries(CAPS.map((c) => [c.key, true])),
+      rooms: Object.fromEntries(ROOMS.map((r) => [r.key, true])),
+    };
+  }
+  const saved = PERMS[rank];
+  return {
+    caps: { ...base.caps, ...(saved?.caps || {}) },
+    rooms: { ...base.rooms, ...(saved?.rooms || {}) },
+  };
+}
+
+const isManagement = (rank) => !!getPerms(rank).caps.management;
+const canWrite = (rank) => !!getPerms(rank).caps.write;
+const canWriteWantedTest = (rank) => !!getPerms(rank).caps.writeAdvanced;
+const canSeeRoom = (rank, key) => !!getPerms(rank).rooms[key];
 
 function startOfWeek(ts) {
   const d = new Date(ts);
@@ -404,6 +475,9 @@ export default function SheriffApp() {
   const [loading, setLoading] = useState(true);
   // id of the user whose profile fetch has finished (avoids a "Profile not found" flash right after sign-in)
   const [profileFor, setProfileFor] = useState(null);
+  // id of the user whose role permissions have been loaded (the menu must not flash the wrong rooms)
+  const [permsFor, setPermsFor] = useState(null);
+  const [, setPermsTick] = useState(0);
   const [view, setView] = useState("dashboard");
   const [viewedProfileId, setViewedProfileId] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
@@ -443,6 +517,23 @@ export default function SheriffApp() {
     setProfileFor(id);
     setLoading(false);
   }, []);
+
+  // Role permissions (rooms + capabilities per rank). On any failure we keep the built-in defaults.
+  const loadPerms = useCallback(async (id) => {
+    try {
+      const { data, error } = await supabase.from("role_permissions").select("rank, rooms, caps");
+      if (error) console.error("permissions error:", error);
+      else applyPerms(data);
+    } catch (e) {
+      console.error("permissions error:", e);
+    }
+    setPermsTick((t) => t + 1);
+    setPermsFor(id);
+  }, []);
+
+  useEffect(() => {
+    if (userId) loadPerms(userId);
+  }, [userId, loadPerms]);
 
   // Discord OAuth callback: ?code=...&state=...
   useEffect(() => {
@@ -524,7 +615,7 @@ export default function SheriffApp() {
     setViewedProfileId(null);
   };
 
-  if ((loading && (session || !exchanging)) || (session && !profile && profileFor !== userId)) {
+  if ((loading && (session || !exchanging)) || (session && !profile && profileFor !== userId) || (session && profile && permsFor !== userId)) {
     return (
       <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <style>{FONTS}</style>
@@ -553,18 +644,15 @@ export default function SheriffApp() {
 
   const management = isManagement(profile.rank);
 
+  // Rooms in the side menu come from the role permissions; the permissions room is always Chef Sheriff only
   const navItems = [
-    { key: "dashboard", label: "dashboard", icon: Shield },
-    { key: "leaderboard", label: "leaderboard", icon: Trophy },
-    ...(management ? [{ key: "officers", label: "officers", icon: Users }] : []),
-    { key: "operations", label: "Operations", icon: Radio },
-    { key: "wanted", label: "Wanted", icon: Search },
-    ...(canWriteWantedTest(profile.rank) ? [{ key: "dispatch", label: "Dispatch", icon: Headphones }] : []),
-    { key: "tests", label: "TEST MDT", icon: Award },
-    { key: "vacations", label: "Vacations", icon: Plane },
-    ...(management ? [{ key: "weekly", label: "weekly schedule", icon: Clock }] : []),
-    ...(isChief(profile.rank) ? [{ key: "activity", label: "activity log", icon: ScrollText }] : []),
+    ...ROOMS.filter((r) => canSeeRoom(profile.rank, r.key)),
+    ...(isChief(profile.rank) ? [{ key: "permissions", label: "permissions", icon: Lock }] : []),
   ];
+
+  // If the room being viewed was just hidden from this rank, fall back to the first room that is still visible
+  const roomHidden = ROOMS.some((r) => r.key === view) && !canSeeRoom(profile.rank, view);
+  const currentView = roomHidden ? (navItems[0]?.key ?? "profile") : view;
 
   const openOwnProfile = () => { setViewedProfileId(profile.id); setView("profile"); };
   const openProfile = (id) => { setViewedProfileId(id); setView("profile"); };
@@ -589,12 +677,12 @@ export default function SheriffApp() {
               <button
                 key={item.key}
                 onClick={() => { setView(item.key); setViewedProfileId(null); setMobileNav(false); }}
-                className={`gx-nav-item${view === item.key ? " gx-nav-item-active" : ""}`}
-                style={{ ...styles.navItem, ...(view === item.key ? styles.navItemActive : {}) }}
+                className={`gx-nav-item${currentView === item.key ? " gx-nav-item-active" : ""}`}
+                style={{ ...styles.navItem, ...(currentView === item.key ? styles.navItemActive : {}) }}
               >
                 <item.icon size={17} strokeWidth={1.8} />
                 <span>{item.label}</span>
-                {view === item.key && <ChevronRight size={14} style={{ marginRight: "auto" }} />}
+                {currentView === item.key && <ChevronRight size={14} style={{ marginRight: "auto" }} />}
               </button>
             ))}
           </nav>
@@ -617,36 +705,38 @@ export default function SheriffApp() {
           <div style={styles.topbar} className="gx-topbar-glass">
             <button style={styles.hamburger} onClick={() => setMobileNav(true)}>☰</button>
             <div style={styles.pageTitle}>
-              {view === "dashboard" && "Dashboard"}
-              {view === "officers" && "Officers"}
-              {view === "leaderboard" && "Leaderboard"}
+              {currentView === "dashboard" && "Dashboard"}
+              {currentView === "officers" && "Officers"}
+              {currentView === "leaderboard" && "Leaderboard"}
               
-              {view === "profile" && "Profile"}
-              {view === "operations" && "Operations"}
-              {view === "wanted" && "Wanted"}
+              {currentView === "profile" && "Profile"}
+              {currentView === "operations" && "Operations"}
+              {currentView === "wanted" && "Wanted"}
           
-              {view === "tests" && "TEST MDT"}
-              {view === "vacations" && "Vacations"} 
-              {view === "weekly" && "Weekly Schedule"}
-              {view === "dispatch" && "Dispatch"}
-              {view === "activity" && "Activity Log"}
+              {currentView === "tests" && "TEST MDT"}
+              {currentView === "vacations" && "Vacations"} 
+              {currentView === "weekly" && "Weekly Schedule"}
+              {currentView === "dispatch" && "Dispatch"}
+              {currentView === "activity" && "Activity Log"}
+              {currentView === "permissions" && "Permissions"}
             </div>
           </div>
 
-          <div key={view} className="gx-fade-up" style={{ flex: "1 0 auto", minHeight: 0, paddingBottom: 32 }}>
-            {view === "dashboard" && <Dashboard profile={profile} openOwnProfile={openOwnProfile} />}
-            {view === "officers" && management && <OfficersView showToast={showToast} onOpenProfile={openProfile} />}
-            {view === "leaderboard" && <LeaderboardView onOpenProfile={openProfile} />}
+          <div key={currentView} className="gx-fade-up" style={{ flex: "1 0 auto", minHeight: 0, paddingBottom: 32 }}>
+            {currentView === "dashboard" && canSeeRoom(profile.rank, "dashboard") && <Dashboard profile={profile} openOwnProfile={openOwnProfile} />}
+            {currentView === "officers" && canSeeRoom(profile.rank, "officers") && <OfficersView showToast={showToast} onOpenProfile={openProfile} />}
+            {currentView === "leaderboard" && canSeeRoom(profile.rank, "leaderboard") && <LeaderboardView onOpenProfile={openProfile} />}
 
-            {view === "profile" && <ProfileView profileId={viewedProfileId} me={profile} showToast={showToast} onDeleted={() => { setView("officers"); setViewedProfileId(null); }} />}
-            {view === "operations" && <OperationsView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
-            {view === "wanted" && <WantedView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
-            {view === "tests" && <TestsView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
+            {currentView === "profile" && <ProfileView profileId={viewedProfileId} me={profile} showToast={showToast} onDeleted={() => { setView("officers"); setViewedProfileId(null); }} />}
+            {currentView === "operations" && canSeeRoom(profile.rank, "operations") && <OperationsView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
+            {currentView === "wanted" && canSeeRoom(profile.rank, "wanted") && <WantedView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
+            {currentView === "tests" && canSeeRoom(profile.rank, "tests") && <TestsView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
 
-            {view === "dispatch" && canWriteWantedTest(profile.rank) && <DispatchView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
-            {view === "vacations" && <VacationsView me={profile} management={management} showToast={showToast} />}
-            {view === "weekly" && management && <WeeklyTableView me={profile} onOpenProfile={openProfile} />}
-            {view === "activity" && isChief(profile.rank) && <ActivityLogView onOpenProfile={openProfile} />}
+            {currentView === "dispatch" && canSeeRoom(profile.rank, "dispatch") && <DispatchView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
+            {currentView === "vacations" && canSeeRoom(profile.rank, "vacations") && <VacationsView me={profile} management={management} showToast={showToast} />}
+            {currentView === "weekly" && canSeeRoom(profile.rank, "weekly") && <WeeklyTableView me={profile} onOpenProfile={openProfile} />}
+            {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
+            {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
           </div>
 
           <SiteFooter />
@@ -977,6 +1067,159 @@ const ACTION_LABELS = {
 };
 
 const ACTIVITY_PAGE_SIZE = 50;
+
+function Toggle({ on, disabled, onClick, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        width: 42, height: 24, borderRadius: 12, padding: 0, flexShrink: 0, position: "relative",
+        border: "1px solid rgba(212,167,44,0.4)",
+        background: on ? "rgba(212,167,44,0.55)" : "rgba(255,255,255,0.06)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        transition: "background 0.2s ease",
+      }}
+    >
+      <span style={{
+        position: "absolute", top: 2, left: on ? 20 : 2, width: 18, height: 18, borderRadius: "50%",
+        background: on ? "#F4C744" : "#8A8579", transition: "left 0.2s ease",
+      }} />
+    </button>
+  );
+}
+
+// Chef Sheriff only: choose, rank by rank, which rooms are visible and what the rank is allowed to do.
+function PermissionsView({ me, showToast, onSaved }) {
+  const firstEditable = RANKS.find((r) => !isChief(r));
+  const [selected, setSelected] = useState(firstEditable);
+  const [draft, setDraft] = useState(() => getPerms(firstEditable));
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const locked = isChief(selected);
+
+  const pick = (rank) => {
+    if (rank === selected) return;
+    if (dirty && !window.confirm("Discard the unsaved changes for this rank?")) return;
+    setSelected(rank);
+    setDraft(getPerms(rank));
+    setDirty(false);
+  };
+
+  const toggle = (group, key) => {
+    if (locked) return;
+    setDraft((d) => ({ ...d, [group]: { ...d[group], [key]: !d[group][key] } }));
+    setDirty(true);
+  };
+
+  const resetToDefaults = () => {
+    if (locked) return;
+    setDraft(defaultPermsFor(selected));
+    setDirty(true);
+  };
+
+  const save = async () => {
+    if (locked || saving) return;
+    setSaving(true);
+    const row = {
+      rank: selected,
+      rooms: draft.rooms,
+      caps: draft.caps,
+      updated_at: new Date().toISOString(),
+      updated_by: me.id,
+    };
+    const { error } = await supabase.from("role_permissions").upsert(row, { onConflict: "rank" });
+    setSaving(false);
+    if (error) {
+      console.error("save permissions error:", error);
+      showToast("error", "Could not save the permissions");
+      return;
+    }
+    setRankPerms(selected, { rooms: draft.rooms, caps: draft.caps });
+    setDirty(false);
+    onSaved && onSaved();
+    showToast("success", `Permissions saved for ${selected}`);
+  };
+
+  return (
+    <div style={styles.content}>
+      <div style={styles.filterRow}>
+        {RANKS.map((r) => (
+          <button
+            key={r}
+            className="gx-btn gx-filter-btn"
+            style={{ ...styles.filterBtn, ...(selected === r ? styles.filterBtnActive : {}) }}
+            onClick={() => pick(r)}
+          >
+            {isChief(r) && <Lock size={11} style={{ marginInlineEnd: 6, verticalAlign: "-1px" }} />}
+            {r}
+          </button>
+        ))}
+      </div>
+
+      <div className="gx-glass-card" style={styles.sectionCard}>
+        <div style={styles.miniName}>{selected}</div>
+        <div style={{ color: "#8A8579", fontSize: 12, marginTop: 6, lineHeight: 1.6 }}>
+          {locked
+            ? "The Chef Sheriff always has every room and every permission, so this rank cannot be locked out."
+            : "These settings control what this rank sees and can do inside the app. The database keeps its own limits, so giving a rank an action it could not do before may still be refused by the server."}
+        </div>
+
+        <div style={{ ...styles.label, marginTop: 20 }}>Rooms (side menu)</div>
+        <div style={styles.rankList}>
+          {ROOMS.map((room) => (
+            <div key={room.key} style={styles.rankRow}>
+              <room.icon size={16} strokeWidth={1.8} color="#B9B3A2" />
+              <div style={{ ...styles.miniName, flex: 1 }}>{room.label}</div>
+              <Toggle
+                on={!!draft.rooms[room.key]}
+                disabled={locked}
+                label={`${room.label} room for ${selected}`}
+                onClick={() => toggle("rooms", room.key)}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div style={{ ...styles.label, marginTop: 20 }}>Permissions</div>
+        <div style={styles.rankList}>
+          {CAPS.map((cap) => (
+            <div key={cap.key} style={styles.rankRow}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={styles.miniName}>{cap.label}</div>
+                <div style={{ color: "#8A8579", fontSize: 11, marginTop: 2 }}>{cap.hint}</div>
+              </div>
+              <Toggle
+                on={!!draft.caps[cap.key]}
+                disabled={locked}
+                label={`${cap.label} for ${selected}`}
+                onClick={() => toggle("caps", cap.key)}
+              />
+            </div>
+          ))}
+        </div>
+
+        {!locked && (
+          <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+            <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, ...((!dirty || saving) ? { opacity: 0.55, cursor: "not-allowed" } : {}) }} onClick={save} disabled={!dirty || saving}>
+              {saving ? "Saving..." : "Save changes"}
+            </button>
+            <button className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={resetToDefaults} disabled={saving}>
+              Reset to defaults
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function ActivityLogView({ onOpenProfile }) {
   const [logs, setLogs] = useState([]);
