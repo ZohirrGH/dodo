@@ -802,9 +802,16 @@ export default function SheriffApp() {
   const userId = session?.user?.id ?? null;
 
   const loadProfile = useCallback(async (id) => {
-    const { data, error } = await supabase
-      .from("profiles").select("*").eq("id", id).maybeSingle();
-    if (error) console.error("profile error:", error);
+    // Right after sign-in the first lookup can come back empty (the new session is not on the request yet),
+    // which showed "Profile not found" until a refresh. Retry a few times before accepting "no profile".
+    let data = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const res = await supabase.from("profiles").select("*").eq("id", id).maybeSingle();
+      if (res.error) console.error("profile error:", res.error);
+      data = res.data ?? null;
+      if (data) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
     setProfile(data ?? null);
     setProfileFor(id);
     setLoading(false);
