@@ -847,16 +847,10 @@ export default function SheriffApp() {
         return;
       }
 
-      // The Discord app returns to the site in a new tab, so the state is kept in localStorage too (10 min)
       let expected = null;
       try {
         expected = sessionStorage.getItem("gx_oauth_state");
         sessionStorage.removeItem("gx_oauth_state");
-      } catch { /* ignore */ }
-      try {
-        const saved = JSON.parse(localStorage.getItem("gx_oauth_state") || "null");
-        localStorage.removeItem("gx_oauth_state");
-        if (!expected && saved?.state && Date.now() - saved.ts < 10 * 60 * 1000) expected = saved.state;
       } catch { /* ignore */ }
       if (!expected || expected !== state) {
         setAuthError(GATE_MESSAGES.state_mismatch);
@@ -1182,7 +1176,6 @@ function startDiscordLogin() {
     sessionStorage.setItem("gx_oauth_state", state);
     sessionStorage.removeItem("gx_manual_login");
   } catch { /* storage blocked: the state check fails and the person can retry */ }
-  try { localStorage.setItem("gx_oauth_state", JSON.stringify({ state, ts: Date.now() })); } catch { /* ignore */ }
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
     redirect_uri: oauthRedirectUri(),
@@ -1190,28 +1183,9 @@ function startDiscordLogin() {
     scope: "identify",
     state,
   });
-
-  // Browser version of the Discord screen. Members who already approved the app skip the consent screen.
-  const webParams = new URLSearchParams(params);
-  try { if (localStorage.getItem("gx_discord_ok") === "1") webParams.set("prompt", "none"); } catch { /* ignore */ }
-  const webUrl = `https://discord.com/oauth2/authorize?${webParams.toString()}`;
-
-  // On a computer, try the Discord desktop app first (discord:// opens the authorize screen inside the app).
-  // If the app does not take focus within a few seconds (not installed / link blocked), fall back to the browser version.
-  const isDesktop = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  if (!isDesktop) { window.location.href = webUrl; return; }
-
-  let appOpened = false;
-  const onLeave = () => { appOpened = true; };
-  const onVisibility = () => { if (document.hidden) appOpened = true; };
-  window.addEventListener("blur", onLeave);
-  document.addEventListener("visibilitychange", onVisibility);
-  setTimeout(() => {
-    window.removeEventListener("blur", onLeave);
-    document.removeEventListener("visibilitychange", onVisibility);
-    if (!appOpened) window.location.href = webUrl;
-  }, 4000);
-  window.location.href = `discord://-/oauth2/authorize?${params.toString()}`;
+  // Members who already approved the app skip Discord's consent screen
+  try { if (localStorage.getItem("gx_discord_ok") === "1") params.set("prompt", "none"); } catch { /* ignore */ }
+  window.location.href = `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
 async function readFnError(error) {
