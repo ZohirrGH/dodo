@@ -465,6 +465,81 @@ textarea:focus-visible,
   .gx-rl-h1, .gx-rl-peek span, .gx-rl-rows > *, .gx-rl-card { animation: none !important; }
   .gx-rl-card:hover::after { animation: none; }
 }
+/* ---------- Leaderboard: hand-picked podium with 3D cards ---------- */
+.gx-lb { direction: ltr; }
+.gx-lb-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; min-height: 40px; }
+.gx-lb-hint { font-size: 13px; color: #8A8579; }
+.gx-lb-board + .gx-lb-board { margin-top: 44px; }
+.gx-lb-title { font-family: 'Oswald', sans-serif; font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: #F5F1E6; }
+.gx-lb-stage { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: end; padding: 22px 4px 6px; }
+.gx-lb-slot { display: flex; flex-direction: column; gap: 10px; animation: gxLbRise .7s cubic-bezier(.2,.8,.2,1) both; }
+.gx-lb-slot[data-place="1"] { order: 2; animation-delay: .28s; }
+.gx-lb-slot[data-place="2"] { order: 1; animation-delay: .14s; }
+.gx-lb-slot[data-place="3"] { order: 3; animation-delay: .02s; }
+@keyframes gxLbRise { from { opacity: 0; transform: perspective(900px) translateY(46px) rotateX(26deg) scale(.94); } to { opacity: 1; transform: none; } }
+
+.gx-lb-card {
+  --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 50%; --accent-rgb: 244,199,68;
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px;
+  min-height: 250px; padding: 26px 14px 22px; text-align: center; border-radius: 18px; outline: none;
+  background: linear-gradient(160deg, rgba(36,31,22,.78), rgba(14,13,11,.66));
+  border: 1px solid rgba(var(--accent-rgb), .38);
+  box-shadow: 0 20px 38px -20px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.05);
+  backdrop-filter: blur(12px) saturate(140%); -webkit-backdrop-filter: blur(12px) saturate(140%);
+  transform: perspective(900px) rotateX(var(--rx)) rotateY(var(--ry));
+  transform-style: preserve-3d; touch-action: pan-y; will-change: transform;
+  transition: transform .45s cubic-bezier(.2,.8,.2,1), box-shadow .3s ease, border-color .3s ease;
+}
+.gx-lb-slot[data-place="1"] .gx-lb-card { min-height: 320px; box-shadow: 0 26px 46px -22px rgba(0,0,0,.9), 0 0 42px -14px rgba(var(--accent-rgb), .55), inset 0 1px 0 rgba(255,255,255,.07); }
+.gx-lb-slot[data-place="2"] .gx-lb-card { min-height: 280px; }
+.gx-lb-card.is-live { transition: transform .08s linear, box-shadow .3s ease, border-color .3s ease; }
+.gx-lb-card:hover, .gx-lb-card:focus-visible { border-color: rgba(var(--accent-rgb), .75); box-shadow: 0 34px 54px -22px rgba(0,0,0,.95), 0 0 46px -8px rgba(var(--accent-rgb), .6); }
+.gx-lb-card.is-link { cursor: pointer; }
+.gx-lb-place {
+  position: absolute; top: 4px; left: 50%; font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 104px; line-height: 1;
+  color: rgba(var(--accent-rgb), .13); transform: translate3d(-50%, 0, 14px); pointer-events: none; user-select: none;
+}
+.gx-lb-medal { transform: translateZ(64px); filter: drop-shadow(0 8px 10px rgba(0,0,0,.65)); }
+.gx-lb-slot[data-place="1"] .gx-lb-medal { animation: gxFloat 3.2s ease-in-out infinite; }
+.gx-lb-avatar {
+  transform: translateZ(48px); border-radius: 50%; padding: 3px; line-height: 0; margin: 4px 0 6px;
+  background: conic-gradient(from 210deg, rgba(var(--accent-rgb), 1), rgba(var(--accent-rgb), .25), rgba(var(--accent-rgb), 1));
+  box-shadow: 0 14px 24px -10px rgba(0,0,0,.85), 0 0 24px -6px rgba(var(--accent-rgb), .5);
+}
+.gx-lb-avatar > * { border: 2px solid rgba(14,13,11,.9); }
+.gx-lb-name { transform: translateZ(36px); font-size: 17px; font-weight: 600; color: #F5F1E6; text-shadow: 0 2px 8px rgba(0,0,0,.6); word-break: break-word; }
+.gx-lb-rank { transform: translateZ(26px); font-size: 12px; color: rgb(var(--accent-rgb)); letter-spacing: .06em; text-transform: uppercase; }
+.gx-lb-badge { transform: translateZ(30px); margin-top: 4px; font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: .08em; color: #B9B3A2; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 3px 10px; }
+.gx-lb-glare { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .3s ease; background: radial-gradient(280px circle at var(--mx) var(--my), rgba(255,255,255,.17), transparent 62%); }
+.gx-lb-card:hover .gx-lb-glare { opacity: 1; }
+.gx-lb-empty { align-items: center; justify-content: center; background: rgba(20,19,17,.28); border: 1px dashed rgba(var(--accent-rgb), .35); box-shadow: none; transform: none; }
+.gx-lb-empty .gx-lb-place { top: 50%; transform: translate(-50%, -50%); font-size: 120px; color: rgba(var(--accent-rgb), .08); }
+.gx-lb-empty-text { position: relative; font-size: 13px; color: #8A8579; }
+.gx-lb-actions { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+
+.gx-lb-modal-bg { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.6); backdrop-filter: blur(3px); animation: gxFadeIn .2s ease both; }
+.gx-lb-modal { width: 440px; max-width: 100%; max-height: min(620px, 86vh); display: flex; flex-direction: column; padding: 18px; border-radius: 16px; background: rgba(20,19,17,.94); border: 1px solid rgba(212,167,44,.3); box-shadow: 0 30px 60px -20px rgba(0,0,0,.9); }
+.gx-lb-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.gx-lb-modal-title { font-family: 'Oswald', sans-serif; font-size: 20px; color: #F4C744; letter-spacing: .06em; }
+.gx-lb-modal-sub { font-size: 12px; color: #8A8579; margin-top: 2px; }
+.gx-lb-modal-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; min-height: 80px; }
+.gx-lb-pick { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 10px; border: 1px solid transparent; background: rgba(255,255,255,.03); color: #F5F1E6; cursor: pointer; font-family: 'Inter', sans-serif; transition: background .15s ease, border-color .15s ease, transform .15s ease; }
+.gx-lb-pick:hover, .gx-lb-pick:focus-visible { background: rgba(212,167,44,.12); border-color: rgba(212,167,44,.4); transform: translateX(3px); outline: none; }
+.gx-lb-pick-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.gx-lb-pick-name { font-size: 14px; font-weight: 500; }
+.gx-lb-pick-rank { font-size: 12px; color: #8A8579; }
+.gx-lb-pick-tag { font-size: 11px; color: #F4C744; background: rgba(212,167,44,.14); border-radius: 20px; padding: 3px 9px; white-space: nowrap; }
+
+@media (max-width: 680px) {
+  .gx-lb-stage { grid-template-columns: 1fr; gap: 16px; }
+  .gx-lb-slot[data-place="1"] { order: 1; } .gx-lb-slot[data-place="2"] { order: 2; } .gx-lb-slot[data-place="3"] { order: 3; }
+  .gx-lb-card, .gx-lb-slot[data-place="1"] .gx-lb-card, .gx-lb-slot[data-place="2"] .gx-lb-card { min-height: 220px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gx-lb-slot, .gx-lb-slot .gx-lb-medal { animation: none !important; }
+  .gx-lb-card { transform: none !important; }
+}
+
 /* ---------- CV Sheriff ---------- */
 .gx-cv { direction: ltr; text-align: left; max-width: 980px; margin: 0 auto; padding: 8px 4px 24px; display: flex; flex-direction: column; gap: 18px; }
 .gx-cv-hero { text-align: center; padding: 18px 8px 4px; }
@@ -593,6 +668,9 @@ const ACTION_GROUPS = [
     { key: "delete_all", label: "Delete anyone's chapters" },
     { key: "reorder", label: "Reorder the chapters", hint: "Use the arrows inside an opened chapter" },
   ] },
+  { room: "leaderboard", label: "Leaderboard", icon: Trophy, actions: [
+    { key: "manage", label: "Choose who stands on the podium", hint: "Nothing is counted: this person picks the officers for each place" },
+  ] },
   { room: "cv", label: "CV Sheriff", icon: FileText, actions: [
     { key: "create", label: "Send a CV", hint: "For Galaxy Citizen. Officers do not need it" },
     { key: "review", label: "See every CV and accept / reject", hint: "Accepting gives the Discord role Accepted CV Sheriff" },
@@ -614,7 +692,7 @@ function defaultActionsFor(rank) {
     const rec = ["create", "edit_own", "edit_all", "delete_own", "delete_all"];
     return {
       operations: none(rec), wanted: none(rec), tests: none(rec), dispatch: none(["create", "edit_own", "delete_own"]),
-      uniform: none([...rec, "reorder"]), rules: none([...rec, "reorder"]), vacations: none(["create", "review"]),
+      uniform: none([...rec, "reorder"]), rules: none([...rec, "reorder"]), leaderboard: none(["manage"]), vacations: none(["create", "review"]),
       cv: { create: true, review: false },
     };
   }
@@ -633,6 +711,8 @@ function defaultActionsFor(rank) {
     // Rules chapters: same idea as the uniform cards
     rules: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief, reorder: chief },
     vacations: { create: write, review: management },
+    // Leaderboard podium: picked by hand; closed until the Chef Sheriff opens it for the senior ranks he trusts
+    leaderboard: { manage: chief },
     // CV Sheriff: officers do not send CVs; reviewing is closed until the Chef Sheriff opens it per rank
     cv: { create: false, review: chief },
   };
@@ -1126,7 +1206,7 @@ export default function SheriffApp() {
           <div key={currentView} className="gx-fade-up" style={{ flex: "1 0 auto", minHeight: 0, paddingBottom: 32 }}>
             {currentView === "dashboard" && canSeeRoom(profile.rank, "dashboard") && <Dashboard profile={profile} openOwnProfile={openOwnProfile} />}
             {currentView === "officers" && canSeeRoom(profile.rank, "officers") && <OfficersView showToast={showToast} onOpenProfile={openProfile} />}
-            {currentView === "leaderboard" && canSeeRoom(profile.rank, "leaderboard") && <LeaderboardView onOpenProfile={openProfile} />}
+            {currentView === "leaderboard" && canSeeRoom(profile.rank, "leaderboard") && <LeaderboardView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
 
             {currentView === "profile" && <ProfileView profileId={viewedProfileId} me={profile} showToast={showToast} onDeleted={() => { setView("officers"); setViewedProfileId(null); }} />}
             {currentView === "operations" && canSeeRoom(profile.rank, "operations") && <OperationsView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
@@ -3048,65 +3128,218 @@ function CvReviewBoard({ me, showToast }) {
   );
 }
 
-function LeaderboardView({ onOpenProfile }) {
-  const [topOverall, setTopOverall] = useState([]);
-  const [topWeek, setTopWeek] = useState([]);
+// ---------------------------------------------------------------------------
+// Leaderboard: a podium chosen BY HAND. Nothing is counted or calculated.
+// Whoever has the permission room "leaderboard" -> "manage" puts officers on the places; everybody sees them.
+// The data comes from get_leaderboard() (so ranks that cannot read other profiles still see the podium).
+// ---------------------------------------------------------------------------
+const LB_PLACES = [1, 2, 3];
+const LB_ACCENT = { 1: "244,199,68", 2: "199,194,181", 3: "184,131,74" };   // gold, silver, bronze
+const LB_ORDINAL = { 1: "1st", 2: "2nd", 3: "3rd" };
 
+// A card that leans towards the pointer; its layers sit at different depths so it feels solid
+function TiltCard({ place, linkable, onOpen, children }) {
+  const ref = useRef(null);
+  const calm = useRef(false);
   useEffect(() => {
-    (async () => {
-      const { data: officers } = await supabase.from("profiles").select("*").neq("rank", CITIZEN_RANK);
-      const { data: logs } = await supabase.from("duty_logs").select("officer_id, duration_hours, work_date");
-
-      const totals = {};
-      (logs || []).forEach((l) => { totals[l.officer_id] = (totals[l.officer_id] || 0) + Number(l.duration_hours); });
-      const overall = (officers || []).map((o) => ({ ...o, hours: totals[o.id] || 0 }))
-        .sort((a, b) => b.hours - a.hours).slice(0, 3);
-      setTopOverall(overall);
-
-      const weekStart = startOfWeek(Date.now());
-      const weekTotals = {};
-      (logs || []).forEach((l) => {
-        if (new Date(l.work_date) >= weekStart) weekTotals[l.officer_id] = (weekTotals[l.officer_id] || 0) + Number(l.duration_hours);
-      });
-      const week = (officers || []).map((o) => ({ ...o, hours: weekTotals[o.id] || 0 }))
-        .filter((o) => o.hours > 0)
-        .sort((a, b) => b.hours - a.hours).slice(0, 3);
-      setTopWeek(week);
-    })();
+    calm.current = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   }, []);
 
-  const PodiumRow = ({ list }) => (
-    <div style={styles.topThreeRow}>
-      {[list[1], list[0], list[2]].map((o, idx) => {
-        if (!o) return <div key={idx} style={{ flex: 1 }} />;
-        const isFirst = idx === 1;
-        return (
-          <div key={o.id} className="gx-glass-card gx-hover-lift" style={{ ...styles.podiumCard, ...(isFirst ? styles.podiumCardFirst : {}) }} onClick={() => onOpenProfile && onOpenProfile(o.id)}>
-            <Medal size={isFirst ? 26 : 20} color={isFirst ? "#D4A72C" : idx === 0 ? "#C7C2B5" : "#B8834A"} />
-            <Avatar url={o.avatar_url} name={o.name} large />
-            <div style={styles.officerName}>{o.name}</div>
-            <div style={styles.officerRank}>{o.rank}</div>
-            <div style={styles.podiumHoursBig}>{fmtHours(o.hours)}</div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  const move = (e) => {
+    const el = ref.current;
+    if (!el || calm.current) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    el.style.setProperty("--ry", `${((x - 0.5) * 24).toFixed(2)}deg`);
+    el.style.setProperty("--rx", `${((0.5 - y) * 20).toFixed(2)}deg`);
+    el.style.setProperty("--mx", `${(x * 100).toFixed(1)}%`);
+    el.style.setProperty("--my", `${(y * 100).toFixed(1)}%`);
+    el.classList.add("is-live");
+  };
+  const leave = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.setProperty("--rx", "0deg");
+    el.style.setProperty("--ry", "0deg");
+    el.classList.remove("is-live");
+  };
 
   return (
-    <div style={styles.content}>
-      <div style={styles.sectionHeader}>Overall Rankings (All Time)</div>
-      {topOverall.length === 0 ? (
-        <div className="gx-glass-card" style={{ ...styles.sectionCard, marginBottom: 28 }}><div style={styles.emptyState}>No data available</div></div>
-      ) : (
-        <div style={{ marginBottom: 28 }}><PodiumRow list={topOverall} /></div>
+    <div
+      ref={ref}
+      className={`gx-lb-card${linkable ? " is-link" : ""}`}
+      style={{ "--accent-rgb": LB_ACCENT[place] }}
+      onPointerMove={move}
+      onPointerLeave={leave}
+      onPointerCancel={leave}
+      onClick={linkable ? onOpen : undefined}
+      onKeyDown={linkable ? (e) => { if (e.key === "Enter") onOpen(); } : undefined}
+      tabIndex={linkable ? 0 : undefined}
+      role={linkable ? "button" : undefined}
+    >
+      {children}
+      <div className="gx-lb-glare" />
+    </div>
+  );
+}
+
+function PodiumBoard({ board, title, data, editing, linkable, onOpenProfile, onPick, onClear }) {
+  return (
+    <section className="gx-lb-board">
+      <div className="gx-lb-title">{title}</div>
+      <div className="gx-lb-stage">
+        {LB_PLACES.map((place) => {
+          const o = data[place];
+          const big = place === 1;
+          return (
+            <div key={place} className="gx-lb-slot" data-place={place}>
+              {o ? (
+                <TiltCard place={place} linkable={linkable} onOpen={() => onOpenProfile && onOpenProfile(o.officer_id)}>
+                  <div className="gx-lb-place">{place}</div>
+                  <Medal className="gx-lb-medal" size={big ? 36 : 28} color={`rgb(${LB_ACCENT[place]})`} />
+                  <div className="gx-lb-avatar"><Avatar url={o.avatar_url} name={o.name} size={big ? 92 : 72} /></div>
+                  <div className="gx-lb-name">{o.name}</div>
+                  <div className="gx-lb-rank">{o.rank}</div>
+                  {o.badge && <div className="gx-lb-badge">#{o.badge}</div>}
+                </TiltCard>
+              ) : (
+                <div className="gx-lb-card gx-lb-empty" style={{ "--accent-rgb": LB_ACCENT[place] }}>
+                  <div className="gx-lb-place">{place}</div>
+                  <div className="gx-lb-empty-text">Not chosen yet</div>
+                </div>
+              )}
+              {editing && (
+                <div className="gx-lb-actions">
+                  <button type="button" style={styles.btnGold} onClick={() => onPick(board, place)}>{o ? "Change" : <><Plus size={14} /> Choose</>}</button>
+                  {o && <button type="button" style={styles.btnGhost} onClick={() => onClear(board, place)}>Remove</button>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// The list a permitted officer picks from
+function PodiumPicker({ board, place, taken, onClose, onChoose }) {
+  const [list, setList] = useState(null);
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("leaderboard_candidates").then(({ data, error }) => {
+      if (!alive) return;
+      if (error) console.error("leaderboard candidates error:", error);
+      setList(error ? [] : data || []);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const needle = q.trim().toLowerCase();
+  const shown = (list || []).filter((o) => !needle || `${o.name} ${o.badge || ""} ${o.rank}`.toLowerCase().includes(needle));
+
+  return (
+    <div className="gx-lb-modal-bg" onClick={onClose}>
+      <div className="gx-lb-modal gx-glass-card" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="gx-lb-modal-head">
+          <div>
+            <div className="gx-lb-modal-title">{LB_ORDINAL[place]} place</div>
+            <div className="gx-lb-modal-sub">{board === "overall" ? "Overall Rankings (All Time)" : "Top Sheriff Week"}</div>
+          </div>
+          <button type="button" style={styles.iconBtnSmall} onClick={onClose} aria-label="Close"><X size={14} /></button>
+        </div>
+        <div style={{ ...styles.searchBox, marginBottom: 10 }}>
+          <Search size={15} color="#8A8579" />
+          <input autoFocus style={styles.searchInput} placeholder="Search by name, badge or rank" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <div className="gx-lb-modal-list">
+          {list === null && <div style={styles.emptyState}>Loading…</div>}
+          {list !== null && shown.length === 0 && <div style={styles.emptyState}>No officer found</div>}
+          {shown.map((o) => (
+            <button type="button" key={o.id} className="gx-lb-pick" onClick={() => onChoose(o.id)}>
+              <Avatar url={o.avatar_url} name={o.name} size={36} />
+              <span className="gx-lb-pick-text">
+                <span className="gx-lb-pick-name">{o.name}</span>
+                <span className="gx-lb-pick-rank">{o.rank}{o.badge ? ` · #${o.badge}` : ""}</span>
+              </span>
+              {taken[o.id] && <span className="gx-lb-pick-tag">{taken[o.id] === place ? "Here now" : `Now ${LB_ORDINAL[taken[o.id]]}`}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardView({ me, showToast, onOpenProfile }) {
+  const [picks, setPicks] = useState({ overall: {}, week: {} });
+  const [editing, setEditing] = useState(false);
+  const [picking, setPicking] = useState(null);   // { board, place }
+  const canManage = can(me.rank, "leaderboard", "manage");
+  const linkable = canSeeRoom(me.rank, "officers");   // opening someone's profile needs the officers room
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc("get_leaderboard");
+    if (error) { console.error("leaderboard error:", error); return; }
+    const next = { overall: {}, week: {} };
+    (data || []).forEach((r) => { if (next[r.board]) next[r.board][r.place] = r; });
+    setPicks((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+  }, []);
+
+  // A small database read: the podium shows what was chosen within seconds, with no refresh
+  useEffect(() => {
+    load();
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 15000);
+    window.addEventListener("focus", load);
+    return () => { clearInterval(timer); window.removeEventListener("focus", load); };
+  }, [load]);
+
+  const save = async (board, place, officerId) => {
+    const { error } = await supabase.rpc("set_leaderboard_pick", { p_board: board, p_place: place, p_officer: officerId });
+    if (error) {
+      console.error("set leaderboard pick error:", error);
+      showToast("error", "Could not save the podium");
+      return;
+    }
+    showToast("success", officerId ? "Podium updated" : "Place cleared");
+    load();
+  };
+
+  const takenFor = (board) => {
+    const map = {};
+    Object.values(picks[board] || {}).forEach((r) => { map[r.officer_id] = r.place; });
+    return map;
+  };
+
+  return (
+    <div style={styles.content} className="gx-lb">
+      {canManage && (
+        <div className="gx-lb-top">
+          <div className="gx-lb-hint">{editing ? "Choose who stands on each place. Everybody sees the change within seconds." : ""}</div>
+          <button type="button" style={editing ? styles.btnGold : styles.btnGhost} onClick={() => setEditing((v) => !v)}>
+            {editing ? "Done" : "Edit podium"}
+          </button>
+        </div>
       )}
 
-      <div style={styles.sectionHeader}>Top Sheriff Week</div>
-      {topWeek.length === 0 ? (
-        <div className="gx-glass-card" style={styles.sectionCard}><div style={styles.emptyState}>No data available for this week yet</div></div>
-      ) : (
-        <PodiumRow list={topWeek} />
+      <PodiumBoard board="overall" title="Overall Rankings (All Time)" data={picks.overall} editing={editing}
+        linkable={linkable} onOpenProfile={onOpenProfile} onPick={(board, place) => setPicking({ board, place })} onClear={(board, place) => save(board, place, null)} />
+      <PodiumBoard board="week" title="Top Sheriff Week" data={picks.week} editing={editing}
+        linkable={linkable} onOpenProfile={onOpenProfile} onPick={(board, place) => setPicking({ board, place })} onClear={(board, place) => save(board, place, null)} />
+
+      {picking && (
+        <PodiumPicker board={picking.board} place={picking.place} taken={takenFor(picking.board)}
+          onClose={() => setPicking(null)}
+          onChoose={async (officerId) => { const p = picking; setPicking(null); await save(p.board, p.place, officerId); }} />
       )}
     </div>
   );
@@ -4131,11 +4364,4 @@ const styles = {
   filterRow: { display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" },
   filterBtn: { background: "rgba(20,19,17,0.4)", border: "1px solid rgba(212,167,44,0.16)", color: "#B9B3A2", borderRadius: 20, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "'Inter', sans-serif" },
   filterBtnActive: { background: "rgba(212,167,44,0.18)", color: "#F4C744", borderColor: "rgba(212,167,44,0.45)" },
-  topThreeRow: { display: "flex", alignItems: "flex-end", gap: 14 },
-  podiumCard: {
-    flex: 1, background: "rgba(20,19,17,0.4)", backdropFilter: "blur(12px) saturate(140%)", WebkitBackdropFilter: "blur(12px) saturate(140%)", border: "1px solid rgba(212,167,44,0.16)", borderRadius: 12,
-    padding: "20px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer",
-  },
-  podiumCardFirst: { border: "1px solid rgba(212,167,44,0.45)", paddingTop: 28, background: "rgba(23,20,16,0.5)" },
-  podiumHoursBig: { fontFamily: "'Oswald', sans-serif", fontSize: 20, color: "#D4A72C" },
 };
