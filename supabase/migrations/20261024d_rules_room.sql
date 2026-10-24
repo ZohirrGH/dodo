@@ -1,7 +1,7 @@
 -- Rules room: six sealed chapters (Miranda Rights, Bill System, 10-Codes, Operational Codes, PD Rules,
 -- Police Internal Rules). Chapters live in public.rules_sections so they can be added / edited / deleted /
 -- reordered from the app. Who may do what is set per rank in the permissions room (room "rules"),
--- exactly like the uniform room. Additive only: CREATE, ALTER POLICY, UPDATE role_permissions, one INSERT.
+-- exactly like the uniform room. Creates one table, one function, updates role_permissions, one INSERT (plus the clean-up in step 0).
 --
 -- Body format (one entry per line, written in the app's editor):
 --   ## Heading            sub-heading ("## 1. Pursuits" shows a number badge)
@@ -10,6 +10,11 @@
 --   Left :: a | b         row with chips on the right ("10-4 :: Received" shows a code badge)
 --   ~ text                small detail line attached to the line above
 --   anything else         plain paragraph
+
+-- 0) Clean-up: an earlier, unused rules design (tables rule_sections / rule_items, never used by the app)
+--    was created by hand in the database. It is dropped here so only one rules system is left.
+drop table if exists public.rule_items;
+drop table if exists public.rule_sections;
 
 create table if not exists public.rules_sections (
   id          uuid primary key default gen_random_uuid(),
@@ -87,7 +92,7 @@ set actions = actions || jsonb_build_object('rules', jsonb_build_object(
       'delete_own', rank = 'Chef Sheriff',
       'delete_all', rank = 'Chef Sheriff',
       'reorder',    rank = 'Chef Sheriff'))
-where not (actions ? 'rules');
+where not coalesce(((actions -> 'rules') ? 'edit_all'), false);   -- also replaces the old create/edit/delete shape
 
 -- The six starting chapters (only when the table is empty)
 insert into public.rules_sections (title, subtitle, icon, accent, body, sort_order)
