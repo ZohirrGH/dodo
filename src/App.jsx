@@ -1785,7 +1785,12 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
     setDeleting(false);
-    if (error) { showToast("error", "Failed to delete account"); return; }
+    if (error) {
+      let reason = "";
+      try { reason = await error.context?.text?.(); } catch (_) { /* ignore */ }
+      showToast("error", reason ? `Failed to delete account: ${reason}` : "Failed to delete account");
+      return;
+    }
     showToast("success", "Account deleted successfully");
     if (onDeleted) onDeleted();
   };
