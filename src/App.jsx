@@ -433,7 +433,8 @@ function defaultActionsFor(rank) {
     wanted: records(advanced, chief),
     tests: records(advanced, chief),
     dispatch: records(advanced, chief),
-    uniform: records(management, chief),
+    // Uniform cards: closed for everybody; the Chef Sheriff opens them rank by rank in the permissions room
+    uniform: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief },
     vacations: { create: write, review: management },
   };
 }
@@ -1752,7 +1753,7 @@ function UniformView({ me, showToast }) {
   const [copied, setCopied] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [rank, setRank] = useState(RANKS[RANKS.length - 1]);
+  const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [imgFile, setImgFile] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1773,8 +1774,7 @@ function UniformView({ me, showToast }) {
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("uniforms").select("*");
     if (error) { console.error("load uniforms error:", error); return; }
-    const pos = (r) => { const i = RANKS.indexOf(r); return i === -1 ? 99 : i; };
-    const sorted = (data || []).slice().sort((a, b) => pos(a.rank) - pos(b.rank) || new Date(a.created_at) - new Date(b.created_at));
+    const sorted = (data || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
     setItems(sorted);
     if (focusId.current) {
       // a card was just added or edited: bring it to the centre
@@ -1842,13 +1842,13 @@ function UniformView({ me, showToast }) {
   const preview = useMemo(() => (imgFile ? URL.createObjectURL(imgFile) : null), [imgFile]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
-  const resetForm = () => { setRank(RANKS[RANKS.length - 1]); setCode(""); setImgFile(null); setEditingId(null); };
+  const resetForm = () => { setName(""); setCode(""); setImgFile(null); setEditingId(null); };
   const scrollToForm = () => setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
 
   const openAdd = () => { resetForm(); setFormOpen(true); scrollToForm(); };
   const openEdit = (it) => {
     setEditingId(it.id);
-    setRank(it.rank);
+    setName(it.name || it.rank || "");
     setCode(it.outfit_code || "");
     setImgFile(null);
     setFormOpen(true);
@@ -1858,6 +1858,7 @@ function UniformView({ me, showToast }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!name.trim()) { showToast("error", "Please write the name of the card"); return; }
     if (!editingId && !imgFile) { showToast("error", "Please choose the uniform image"); return; }
     if (imgFile && imgFile.size > 8 * 1024 * 1024) { showToast("error", "The image is too big (8 MB max)"); return; }
     setBusy(true);
@@ -1869,7 +1870,7 @@ function UniformView({ me, showToast }) {
       if (upErr) { setBusy(false); showToast("error", "Failed to upload image"); return; }
       image_url = supabase.storage.from("proofs").getPublicUrl(path).data.publicUrl;
     }
-    const payload = { rank, outfit_code: code.trim() || null, ...(image_url ? { image_url } : {}) };
+    const payload = { name: name.trim(), outfit_code: code.trim() || null, ...(image_url ? { image_url } : {}) };
     let error;
     if (editingId) {
       ({ error } = await supabase.from("uniforms").update(payload).eq("id", editingId));
@@ -1931,11 +1932,11 @@ function UniformView({ me, showToast }) {
                 <div className="gx-uni-inner">
                   <div className="gx-uni-card" style={{ "--c": UNIFORM_COLORS[i % UNIFORM_COLORS.length] }}>
                     {it.image_url
-                      ? <img src={uniformImg(it.image_url)} alt={it.rank} draggable={false} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                      ? <img src={uniformImg(it.image_url)} alt={it.name || it.rank} draggable={false} onError={(e) => { e.currentTarget.style.display = "none"; }} />
                       : <div className="gx-uni-ph"><i /><b /></div>}
                   </div>
                   <div className="gx-uni-label">
-                    <span className="gx-uni-name">{it.rank}</span>
+                    <span className="gx-uni-name">{it.name || it.rank}</span>
                     {it.outfit_code && (
                       <span className="gx-uni-code" title="Copy code" onClick={(e) => { e.stopPropagation(); copy(it.outfit_code); }}>
                         {copied && a === 0 ? "Copied ✓" : it.outfit_code}
@@ -1958,7 +1959,7 @@ function UniformView({ me, showToast }) {
             <button type="button" className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={openAdd}><Plus size={15} /> Add card</button>
           )}
           {canEdit && (
-            <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => openEdit(cur)}>✎ Edit {cur.rank}</button>
+            <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => openEdit(cur)}>✎ Edit {cur.name || cur.rank}</button>
           )}
           {canDelete && (
             <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, color: "#E0776A" }} onClick={() => deleteItem(cur.id)}>✕ Delete</button>
@@ -1972,10 +1973,8 @@ function UniformView({ me, showToast }) {
             <div style={styles.sectionHeader}>{editingId ? "Edit Card" : "Add Card"}</div>
             <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div>
-                <label style={styles.label}>Rank (the name shown under the card)</label>
-                <select style={styles.input} value={rank} onChange={(e) => setRank(e.target.value)}>
-                  {RANKS.map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
+                <label style={styles.label}>Name (shown under the card)</label>
+                <input style={styles.input} placeholder="Capitan" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div>
                 <label style={styles.label}>Outfit code</label>
