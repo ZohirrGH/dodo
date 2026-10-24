@@ -405,6 +405,13 @@ const ACTION_GROUPS = [
     { key: "edit_own", label: "Edit their own logs" },
     { key: "delete_own", label: "Delete their own logs" },
   ] },
+  { room: "uniform", label: "Uniform", icon: Shirt, actions: [
+    { key: "create", label: "Add uniform cards" },
+    { key: "edit_own", label: "Edit their own cards" },
+    { key: "edit_all", label: "Edit anyone's cards" },
+    { key: "delete_own", label: "Delete their own cards" },
+    { key: "delete_all", label: "Delete anyone's cards" },
+  ] },
   { room: "vacations", label: "Vacations", icon: Plane, actions: [
     { key: "create", label: "Submit vacation requests" },
     { key: "review", label: "See every request and accept / reject", hint: "Without this, an officer only sees their own requests" },
@@ -426,6 +433,7 @@ function defaultActionsFor(rank) {
     wanted: records(advanced, chief),
     tests: records(advanced, chief),
     dispatch: records(advanced, chief),
+    uniform: records(management, chief),
     vacations: { create: write, review: management },
   };
 }
@@ -815,7 +823,7 @@ export default function SheriffApp() {
             {currentView === "dispatch" && canSeeRoom(profile.rank, "dispatch") && <DispatchView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
             {currentView === "vacations" && canSeeRoom(profile.rank, "vacations") && <VacationsView me={profile} management={management} showToast={showToast} />}
             {currentView === "weekly" && canSeeRoom(profile.rank, "weekly") && <WeeklyTableView me={profile} onOpenProfile={openProfile} />}
-            {currentView === "uniform" && canSeeRoom(profile.rank, "uniform") && <UniformView />}
+            {currentView === "uniform" && canSeeRoom(profile.rank, "uniform") && <UniformView me={profile} showToast={showToast} />}
             {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
             {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
           </div>
@@ -1730,47 +1738,77 @@ function LogRows({ list, emptyMsg, onEdit, onDelete }) {
 }
 
 // ---------------------------------------------------------------------------
-// Uniform room: one card per rank (in hierarchy order) with the outfit code under the rank name.
-// To change a code or add a picture, edit UNIFORMS below (image = link to the outfit screenshot).
+// Uniform room: a 3D gallery of outfit cards, ordered by rank (highest first), with the rank name and the
+// outfit code under each card. The cards live in the "uniforms" table; who can add / edit / delete them is
+// set per rank in the permissions room (room "uniform").
+// image_url is a full link (photos uploaded from the site) or a file name inside public/uniforms/.
 // ---------------------------------------------------------------------------
 const UNIFORM_COLORS = ["#1d3557", "#5a3a2a", "#3a3a5c", "#4a2f5c", "#2b4a7a", "#1f6b5a", "#6b4a1f", "#7a2f55", "#2f5c4a", "#5c6320", "#6b3a3a", "#2b4a7a"];
-// Put the pictures in the public/uniforms/ folder and write just the file name here (e.g. "capitan.png").
-// A full link (https://...) works too.
 const uniformImg = (img) => (!img ? "" : /^https?:\/\//.test(img) ? img : `${import.meta.env.BASE_URL}uniforms/${img}`);
-const UNIFORMS = {
-  
-  "Division Chef": { code: "DAUNhTjAnA", image: "division-chef.png" },
-  "Major": { code: "q3RCu0NObi", image: "major.png" },
-  "Capitan": { code: "s2YMa10BAE", image: "capitan.png" },
-  "Lieutnant": { code: "9URtq1j0M1", image: "lieutnant.png" },
-  "Sergent": { code: "s2YMa10BAE", image: "sergent.png" },
-  "Master Deputy": { code: "MaNPLXk-N-", image: "master-deputy.png" },
-  "Deputy First Class": { code: "s2YMa10BAE", image: "deputy-first-class.png" },
-  "Deputy": { code: "6kov4er4Aa", image: "deputy.png" },
-};
 
-const UNIFORM_RANKS = RANKS.filter((r) => UNIFORMS[r]);
-
-function UniformView() {
-  const RANKS = UNIFORM_RANKS;
-  const [current, setCurrent] = useState(Math.floor(RANKS.length / 2) - 1);
+function UniformView({ me, showToast }) {
+  const [items, setItems] = useState([]);
+  const [current, setCurrent] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [rank, setRank] = useState(RANKS[RANKS.length - 1]);
+  const [code, setCode] = useState("");
+  const [imgFile, setImgFile] = useState(null);
+  const [busy, setBusy] = useState(false);
   const galleryRef = useRef(null);
+  const formRef = useRef(null);
   const [width, setWidth] = useState(900);
   const drag = useRef({ startX: null, moved: false });
   const lock = useRef(false);
   const dragged = useRef(false);
-  const go = useCallback((i) => setCurrent(Math.max(0, Math.min(RANKS.length - 1, i))), []);
+  const countRef = useRef(0);
+  const focusId = useRef(null);
+  const firstLoad = useRef(true);
+
+  const n = items.length;
+  countRef.current = n;
+  const go = useCallback((i) => setCurrent(Math.max(0, Math.min(countRef.current - 1, i))), []);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from("uniforms").select("*");
+    if (error) { console.error("load uniforms error:", error); return; }
+    const pos = (r) => { const i = RANKS.indexOf(r); return i === -1 ? 99 : i; };
+    const sorted = (data || []).slice().sort((a, b) => pos(a.rank) - pos(b.rank) || new Date(a.created_at) - new Date(b.created_at));
+    setItems(sorted);
+    if (focusId.current) {
+      // a card was just added or edited: bring it to the centre
+      const idx = sorted.findIndex((x) => x.id === focusId.current);
+      if (idx >= 0) setCurrent(idx);
+      focusId.current = null;
+    } else if (firstLoad.current) {
+      setCurrent(Math.max(0, Math.floor(sorted.length / 2) - 1));
+    }
+    firstLoad.current = false;
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("uniforms_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "uniforms" }, () => load())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [load]);
+
+  // If cards were deleted, keep the centre card inside the list
+  useEffect(() => { setCurrent((c) => Math.max(0, Math.min(c, n - 1))); }, [n]);
 
   useEffect(() => {
     const el = galleryRef.current;
     if (!el) return undefined;
     const onWheel = (e) => {
+      if (countRef.current < 2) return;
       e.preventDefault();
       if (lock.current) return;
       lock.current = true;
       setTimeout(() => { lock.current = false; }, 700);
-      setCurrent((c) => Math.max(0, Math.min(RANKS.length - 1, c + ((e.deltaY || e.deltaX) > 0 ? 1 : -1))));
+      setCurrent((c) => Math.max(0, Math.min(countRef.current - 1, c + ((e.deltaY || e.deltaX) > 0 ? 1 : -1))));
     };
     const onResize = () => setWidth(el.clientWidth);
     onResize();
@@ -1779,7 +1817,7 @@ function UniformView() {
     return () => { el.removeEventListener("wheel", onWheel); window.removeEventListener("resize", onResize); };
   }, []);
 
-   const onDown = (e) => {
+  const onDown = (e) => {
     dragged.current = false;
     drag.current = { startX: e.clientX, moved: false, onCode: !!e.target.closest(".gx-uni-code") };
   };
@@ -1790,17 +1828,79 @@ function UniformView() {
     if (Math.abs(dx) > 50) { d.moved = true; dragged.current = true; go(current + (dx < 0 ? 1 : -1)); d.startX = e.clientX; }
   };
   // Going to a card is done on release (not on "click"), so it still works while the card is growing under the mouse
-    const onUp = () => {
+  const onUp = () => {
     drag.current = { startX: null, moved: false, onCode: false };
   };
 
-  const copy = (code) => {
-    try { navigator.clipboard?.writeText(code); } catch { /* ignore */ }
+  const copy = (text) => {
+    try { navigator.clipboard?.writeText(text); } catch { /* ignore */ }
     setCopied(true);
     setTimeout(() => setCopied(false), 1400);
   };
 
+  // --- add / edit / delete -------------------------------------------------
+  const preview = useMemo(() => (imgFile ? URL.createObjectURL(imgFile) : null), [imgFile]);
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  const resetForm = () => { setRank(RANKS[RANKS.length - 1]); setCode(""); setImgFile(null); setEditingId(null); };
+  const scrollToForm = () => setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+
+  const openAdd = () => { resetForm(); setFormOpen(true); scrollToForm(); };
+  const openEdit = (it) => {
+    setEditingId(it.id);
+    setRank(it.rank);
+    setCode(it.outfit_code || "");
+    setImgFile(null);
+    setFormOpen(true);
+    scrollToForm();
+  };
+  const closeForm = () => { resetForm(); setFormOpen(false); };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!editingId && !imgFile) { showToast("error", "Please choose the uniform image"); return; }
+    if (imgFile && imgFile.size > 8 * 1024 * 1024) { showToast("error", "The image is too big (8 MB max)"); return; }
+    setBusy(true);
+    let image_url;
+    if (imgFile) {
+      const safeName = imgFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `${me.id}/uniform-${Date.now()}-${safeName}`;
+      const { error: upErr } = await supabase.storage.from("proofs").upload(path, imgFile);
+      if (upErr) { setBusy(false); showToast("error", "Failed to upload image"); return; }
+      image_url = supabase.storage.from("proofs").getPublicUrl(path).data.publicUrl;
+    }
+    const payload = { rank, outfit_code: code.trim() || null, ...(image_url ? { image_url } : {}) };
+    let error;
+    if (editingId) {
+      ({ error } = await supabase.from("uniforms").update(payload).eq("id", editingId));
+      focusId.current = editingId;
+    } else {
+      const res = await supabase.from("uniforms").insert({ ...payload, created_by: me.id }).select("id").single();
+      error = res.error;
+      focusId.current = res.data?.id || null;
+    }
+    setBusy(false);
+    if (error) { focusId.current = null; showToast("error", editingId ? "Failed to update the card" : "Failed to add the card"); return; }
+    showToast("success", editingId ? "Card updated" : "Card added");
+    closeForm();
+    load();
+  };
+
+  const deleteItem = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this card?")) return;
+    const { error } = await supabase.from("uniforms").delete().eq("id", id);
+    if (error) { showToast("error", "Failed to delete the card"); return; }
+    showToast("success", "Card deleted");
+    load();
+  };
+
   const step = Math.min(250, width * 0.36);
+  const cur = items[current];
+  const canCreate = can(me.rank, "uniform", "create");
+  const canEdit = !!cur && canEditItem(me, "uniform", cur.created_by);
+  const canDelete = !!cur && canDeleteItem(me, "uniform", cur.created_by);
+  const editingItem = editingId ? items.find((x) => x.id === editingId) : null;
+  const formImg = preview || (editingItem ? uniformImg(editingItem.image_url) : "");
 
   return (
     <div>
@@ -1809,14 +1909,14 @@ function UniformView() {
         Click any card to bring it to the center. Hover to enlarge it. Click a code to copy it.
       </div>
       <div className="gx-uni" ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { drag.current = { startX: null, moved: false, idx: null, onCode: false }; }}>
+        {n === 0 && <div style={{ ...styles.emptyState, position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>No uniform cards yet</div>}
         <div className="gx-uni-stage">
-          {RANKS.map((rank, i) => {
+          {items.map((it, i) => {
             const o = i - current;
             const a = Math.abs(o);
-            const u = UNIFORMS[rank] || {};
             return (
-                           <div
-                key={rank}
+              <div
+                key={it.id}
                 className={`gx-uni-item${a === 0 ? " active" : ""}`}
                 style={{
                   transform: `translateX(${o * step}px) translateZ(${-a * 90}px) rotateY(${-o * 16}deg) scale(${a === 0 ? 1.08 : 1})`,
@@ -1830,15 +1930,15 @@ function UniformView() {
               >
                 <div className="gx-uni-inner">
                   <div className="gx-uni-card" style={{ "--c": UNIFORM_COLORS[i % UNIFORM_COLORS.length] }}>
-                    {u.image
-                      ? <img src={uniformImg(u.image)} alt={rank} draggable={false} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                    {it.image_url
+                      ? <img src={uniformImg(it.image_url)} alt={it.rank} draggable={false} onError={(e) => { e.currentTarget.style.display = "none"; }} />
                       : <div className="gx-uni-ph"><i /><b /></div>}
                   </div>
                   <div className="gx-uni-label">
-                    <span className="gx-uni-name">{rank}</span>
-                    {u.code && (
-                      <span className="gx-uni-code" title="Copy code" onClick={(e) => { e.stopPropagation(); copy(u.code); }}>
-                        {copied && a === 0 ? "Copied ✓" : u.code}
+                    <span className="gx-uni-name">{it.rank}</span>
+                    {it.outfit_code && (
+                      <span className="gx-uni-code" title="Copy code" onClick={(e) => { e.stopPropagation(); copy(it.outfit_code); }}>
+                        {copied && a === 0 ? "Copied ✓" : it.outfit_code}
                       </span>
                     )}
                   </div>
@@ -1849,8 +1949,55 @@ function UniformView() {
         </div>
       </div>
       <div className="gx-uni-dots">
-        {RANKS.map((r, i) => <span key={r} className={i === current ? "on" : ""} onClick={() => go(i)} />)}
+        {items.map((it, i) => <span key={it.id} className={i === current ? "on" : ""} onClick={() => go(i)} />)}
       </div>
+
+      {(canCreate || canEdit || canDelete) && (
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap", marginTop: 18 }}>
+          {canCreate && !formOpen && (
+            <button type="button" className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={openAdd}><Plus size={15} /> Add card</button>
+          )}
+          {canEdit && (
+            <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => openEdit(cur)}>✎ Edit {cur.rank}</button>
+          )}
+          {canDelete && (
+            <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, color: "#E0776A" }} onClick={() => deleteItem(cur.id)}>✕ Delete</button>
+          )}
+        </div>
+      )}
+
+      {formOpen && (
+        <div style={styles.content}>
+          <div ref={formRef} className="gx-glass-card" style={styles.sectionCard}>
+            <div style={styles.sectionHeader}>{editingId ? "Edit Card" : "Add Card"}</div>
+            <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={styles.label}>Rank (the name shown under the card)</label>
+                <select style={styles.input} value={rank} onChange={(e) => setRank(e.target.value)}>
+                  {RANKS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={styles.label}>Outfit code</label>
+                <input style={styles.input} placeholder="s2YMa10BAE" value={code} onChange={(e) => setCode(e.target.value)} />
+              </div>
+              <div>
+                <label style={styles.label}>Uniform image {editingId && "— Leave it blank to keep the current one"}</label>
+                <label style={styles.uploadBox}>
+                  <Upload size={16} />
+                  <span>{imgFile ? imgFile.name : "Click to select an image"}</span>
+                  <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => setImgFile(e.target.files?.[0] || null)} />
+                </label>
+                {formImg && <img src={formImg} alt="preview" style={{ marginTop: 10, height: 150, borderRadius: 10, border: "1px solid rgba(212,167,44,0.3)", objectFit: "cover" }} />}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="gx-btn gx-btn-gold" style={styles.btnGold} disabled={busy}>{busy ? "..." : editingId ? "Save Changes" : "Add"}</button>
+                <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={closeForm}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
