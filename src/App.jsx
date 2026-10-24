@@ -12,6 +12,8 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import backgroundVideo from "./assets/background.mp4";
+import REDESIGN_CSS from "./gxRedesign.css?inline";
+import { initGxFx } from "./gxFx.js";
 
 const BACKGROUND_VIDEO_URL = backgroundVideo;
 const BACKGROUND_VIDEO_TYPE = "video/mp4";
@@ -831,6 +833,7 @@ function shortId(id) {
 }
 
 export default function SheriffApp() {
+  useEffect(() => initGxFx(), []);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1087,7 +1090,7 @@ export default function SheriffApp() {
   if ((loading && (session || !exchanging)) || (session && !profile && profileFor !== userId) || (session && profile && permsFor !== userId)) {
     return (
       <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <style>{FONTS}</style>
+        <style>{FONTS}</style><style>{REDESIGN_CSS}</style>
         <div style={{ color: "#B9B3A2" }}>Loading...</div>
       </div>
     );
@@ -1097,7 +1100,7 @@ export default function SheriffApp() {
   if (session && !profile) {
     return (
       <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
-        <style>{FONTS}</style>
+        <style>{FONTS}</style><style>{REDESIGN_CSS}</style>
         <div>Profile not found for this account.</div>
         <button className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={logout}>Sign out</button>
       </div>
@@ -1128,7 +1131,7 @@ export default function SheriffApp() {
 
   return (
     <div style={styles.page}>
-      <style>{FONTS}</style>
+      <style>{FONTS}</style><style>{REDESIGN_CSS}</style>
       <BackgroundVideo />
 
       <div style={styles.shell}>
@@ -1443,6 +1446,27 @@ const GATE_MESSAGES = {
   denied: "Discord sign-in was cancelled.",
 };
 
+// Animated 3D backdrop for the Discord login screen (gold on black, same palette as the rest of the site)
+function LoginScene() {
+  const particles = useMemo(() => Array.from({ length: 26 }, (_, i) => {
+    const r = (n) => { const x = Math.sin(i * 9301 + n * 49297) * 233280; return x - Math.floor(x); };
+    return { left: `${(r(1) * 100).toFixed(1)}%`, size: 2 + r(2) * 4, dur: 9 + r(3) * 11, delay: -r(4) * 18, dx: (r(5) - 0.5) * 120, o: 0.45 + r(6) * 0.5 };
+  }), []);
+  return (
+    <div className="gx-scene">
+      <div className="gx-scene-orb" style={{ width: 420, height: 420, left: "-6%", top: "8%" }} />
+      <div className="gx-scene-orb" style={{ width: 360, height: 360, right: "-4%", bottom: "12%", animationDelay: "-6s" }} />
+      <div className="gx-scene-radar" />
+      <div className="gx-scene-floor" />
+      {particles.map((p, i) => (
+        <span key={i} className="gx-scene-particle"
+          style={{ left: p.left, width: p.size, height: p.size, animationDuration: `${p.dur}s`, animationDelay: `${p.delay}s`, "--dx": `${p.dx}px`, "--o": p.o }} />
+      ))}
+      <div className="gx-scene-vignette" />
+    </div>
+  );
+}
+
 // No login form any more: people are sent straight to Discord.
 // This screen only shows while we wait for Discord, after a sign-out, or when access is refused.
 function DiscordGate({ busy, error, autoStart }) {
@@ -1460,9 +1484,9 @@ function DiscordGate({ busy, error, autoStart }) {
   const waiting = !localError && (busy || autoStart || appWait);
   return (
     <div style={styles.loginPage}>
-      <style>{FONTS}</style>
-      <div style={styles.loginGrid} />
-      <div className="gx-glass-card gx-fade-up" style={styles.loginCard}>
+      <style>{FONTS}</style><style>{REDESIGN_CSS}</style>
+      <LoginScene />
+      <div className="gx-glass-card gx-fade-up gx-login-card" style={styles.loginCard}>
         <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
         <div style={styles.loginTitle}>SHERIFF DEPARTMENT</div>
         {waiting ? (
@@ -1496,9 +1520,9 @@ function RelayDone({ onClaim }) {
   const [busy, setBusy] = useState(false);
   return (
     <div style={styles.loginPage}>
-      <style>{FONTS}</style>
-      <div style={styles.loginGrid} />
-      <div className="gx-glass-card gx-fade-up" style={styles.loginCard}>
+      <style>{FONTS}</style><style>{REDESIGN_CSS}</style>
+      <LoginScene />
+      <div className="gx-glass-card gx-fade-up gx-login-card" style={styles.loginCard}>
         <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
         <div style={styles.loginTitle}>SHERIFF DEPARTMENT</div>
         <div style={styles.loginSub}>Discord login finished. Go back to the first tab where you started: it signs you in by itself. You can close this tab.</div>
