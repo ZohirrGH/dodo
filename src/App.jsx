@@ -3,7 +3,7 @@ import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
   Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt,
-  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles, Eye, FileText,
+  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles, Eye, FileText, Play, Square,
 } from "lucide-react";
 
 
@@ -20,7 +20,7 @@ const BACKGROUND_VIDEO_TYPE = "video/mp4";
 const DISCORD_INVITE_URL = "https://discord.gg/tWwmV44dhE";
 
 const FONTS = `
-@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap');
 
 :root {
   --gx-gold: #D4A72C;
@@ -52,6 +52,14 @@ const FONTS = `
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-5px); }
 }
+@keyframes gxDmPulse {
+  0% { box-shadow: 0 0 0 0 rgba(94,255,160,0.6); }
+  70% { box-shadow: 0 0 0 9px rgba(94,255,160,0); }
+  100% { box-shadow: 0 0 0 0 rgba(94,255,160,0); }
+}
+.gx-dm-led { animation: gxDmPulse 1.6s ease-out infinite; }
+.gx-dm-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 22px; }
+@media (max-width: 760px) { .gx-dm-grid { grid-template-columns: 1fr; } }
 
 .gx-video-wrap { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -2; overflow: hidden; background: #050505; }
 .gx-video-bg { position: absolute; top: 50%; left: 50%; min-width: 100%; min-height: 100%; width: auto; height: auto; transform: translate(-50%, -50%); object-fit: cover; }
@@ -807,30 +815,6 @@ function fmtHours(h) {
   if (h < 1) return `${Math.round(h * 60)} min`;
   return `${h.toFixed(1)} h`;
 }
-
-// Hourly rate per rank (from the "Hourly Salary by Rank" chart).
-// Chef Sheriff has no listed rate on the chart — assumed 20000 as the next
-// step above Under Sheriff (18000); change this if you have an official value.
-const HOURLY_RATES = {
-  "Chef Sheriff": 20000,
-  "Under Sheriff": 18000,
-  "Assistant Chef": 16000,
-  "Division Chef": 14000,
-  "Major": 12000,
-  "Capitan": 10000,
-  "Lieutnant": 9000,
-  "Sergent": 8000,
-  "Master Deputy": 7000,
-  "Deputy First Class": 6000,
-  "Deputy": 5000,
-};
-function getHourlyRate(rank) {
-  return HOURLY_RATES[rank] || 0;
-}
-function fmtMoney(n) {
-  return `$${Math.round(n || 0).toLocaleString("en-US")}`;
-}
-
 
 function matchesQuery(officer, query) {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -1592,30 +1576,42 @@ function OfficerPicker({ selectedIds, onChange, multiple = false, placeholder = 
   );
 }
 
-// ---- Duty timer: server-side stopwatch (allowed 14:00 -> 06:00 only) ----
+// ---- Duty monitor: server-side stopwatch (14:00 -> 06:00 only, 8 hours max per shift) ----
 function pad2(n) { return String(n).padStart(2, "0"); }
 function fmtClock(ms) {
   const t = Math.max(0, Math.floor(ms / 1000));
   return `${pad2(Math.floor(t / 3600))}:${pad2(Math.floor((t % 3600) / 60))}:${pad2(t % 60)}`;
 }
 
+const DUTY_MAX_MS = 8 * 3600 * 1000;
+
 function DutyTimer({ profile, onLogged }) {
   const [st, setSt] = useState(null);       // last duty_status() answer
   const [offset, setOffset] = useState(0);  // server clock - browser clock
   const [tick, setTick] = useState(Date.now());
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null);     // { type: "error" | "success", text }
+  const [msg, setMsg] = useState(null);     // { type: "error" | "success" | "info", text }
+  const wasRunning = useRef(false);
+  const stopping = useRef(false);
+  const loggedCb = useRef(onLogged);
+  loggedCb.current = onLogged;
 
   const refresh = useCallback(async () => {
     const { data, error } = await supabase.rpc("duty_status");
     if (error || !data) return;
+    // the server closed our shift by itself (8 hours reached or 06:00): tell the officer
+    if (wasRunning.current && !data.started_at && !stopping.current) {
+      setMsg({ type: "info", text: "Your shift was closed automatically and saved to your time logs." });
+      loggedCb.current && loggedCb.current();
+    }
+    wasRunning.current = !!data.started_at;
     setSt(data);
     setOffset(new Date(data.server_now).getTime() - Date.now());
   }, []);
 
   useEffect(() => {
     refresh();
-    const poll = setInterval(refresh, 30000);
+    const poll = setInterval(refresh, 15000);
     const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => { clearInterval(poll); document.removeEventListener("visibilitychange", onVisible); };
@@ -1626,85 +1622,182 @@ function DutyTimer({ profile, onLogged }) {
     return () => clearInterval(t);
   }, []);
 
-  // Re-check right when the 14:00 / 06:00 boundary passes
+  const running = !!st?.started_at;
+
+  // Re-check right when the shift ends (8h / 06:00) or when the 14:00 window opens
   useEffect(() => {
-    if (!st?.changes_at) return;
-    const wait = new Date(st.changes_at).getTime() - (Date.now() + offset) + 1500;
+    const edge = running ? st?.ends_at : st?.changes_at;
+    if (!edge) return;
+    const wait = new Date(edge).getTime() - (Date.now() + offset) + 1500;
     if (wait <= 0 || wait > 2147483000) return;
     const t = setTimeout(refresh, wait);
     return () => clearTimeout(t);
-  }, [st?.changes_at, offset, refresh]);
+  }, [running, st?.ends_at, st?.changes_at, offset, refresh]);
 
   const now = tick + offset;
-  const running = !!st?.started_at;
-  const elapsed = running ? now - new Date(st.started_at).getTime() : 0;
+  const startMs = running ? new Date(st.started_at).getTime() : 0;
+  const endMs = running && st.ends_at ? new Date(st.ends_at).getTime() : null;
+  const cap = running && endMs ? Math.min(endMs - startMs, DUTY_MAX_MS) : DUTY_MAX_MS;
+  const elapsed = running ? Math.min(Math.max(0, now - startMs), cap) : 0;
+  const remaining = running && endMs ? Math.max(0, endMs - now) : 0;
   const windowOpen = st ? (running ? true : st.window_open) : false;
+  const opensIn = !running && st && !st.window_open && st.changes_at ? Math.max(0, new Date(st.changes_at).getTime() - now) : 0;
+  const warn = running && remaining < 30 * 60 * 1000;
+
+  const accent = running ? (warn ? "#FFC24B" : "#5EFFA0") : windowOpen ? "#8FD9B0" : "#6B7F73";
+  const chip = running ? "ON DUTY" : windowOpen ? "READY" : "CLOSED";
+  const roster = st?.on_duty_list || [];
 
   const start = async () => {
     setBusy(true); setMsg(null);
     const { error } = await supabase.rpc("duty_start");
     setBusy(false);
     if (error) {
-      setMsg({ type: "error", text: error.message === "outside_hours" ? "The timer can only be started between 14:00 and 06:00." : "Could not start the timer." });
+      setMsg({ type: "error", text: error.message === "outside_hours" ? "Duty can only be started between 14:00 and 06:00." : "Could not start the timer." });
       refresh(); return;
     }
     refresh();
   };
 
   const stop = async () => {
-    setBusy(true); setMsg(null);
+    setBusy(true); setMsg(null); stopping.current = true;
     const { data, error } = await supabase.rpc("duty_stop");
     setBusy(false);
-    if (error) { setMsg({ type: "error", text: "Could not stop the timer." }); return; }
+    if (error) { stopping.current = false; setMsg({ type: "error", text: "Could not stop the timer." }); return; }
     if (data?.logged) {
       setMsg({ type: "success", text: `Logged ${fmtHours(Number(data.duration_hours))} (${data.time_in} → ${data.time_out}).` });
-      onLogged && onLogged();
+      loggedCb.current && loggedCb.current();
     } else if (data?.too_short) {
       setMsg({ type: "error", text: "Session was too short to be logged." });
     }
-    refresh();
+    await refresh();
+    stopping.current = false;
   };
 
+  const msgColor = msg ? (msg.type === "error" ? "#ff7b6e" : msg.type === "info" ? "#FFC24B" : "#5EFFA0") : undefined;
+
   return (
-    <div className="gx-glass-card" style={dutyStyles.card}>
-      <div style={dutyStyles.left}>
-        <div style={dutyStyles.label}>
-          <span style={{ ...dutyStyles.dot, background: running ? "#4ade80" : "#6b6b66" }} />
-          {running ? "ON DUTY" : "OFF DUTY"}
+    <div className="gx-glass-card" style={dm.bezel}>
+      <div style={dm.screen}>
+        <div style={dm.scan} />
+
+        {/* title bar */}
+        <div style={dm.bar}>
+          <div style={dm.barLeft}>
+            <span className={running ? "gx-dm-led" : undefined} style={{ ...dm.led, background: accent, boxShadow: running ? `0 0 10px ${accent}` : "none" }} />
+            <span style={dm.title}>DUTY MONITOR</span>
+          </div>
+          <span style={{ ...dm.chip, color: accent, borderColor: accent }}>{chip}</span>
         </div>
-        <div style={dutyStyles.clock}>{fmtClock(elapsed)}</div>
-        <div style={dutyStyles.hint}>
-          {running
-            ? "Stops automatically at 06:00 if you forget."
-            : windowOpen ? "Press start when you go on duty." : "Duty time can be logged between 14:00 and 06:00."}
+
+        <div className="gx-dm-grid" style={{ position: "relative", zIndex: 2 }}>
+          {/* ---------- stopwatch ---------- */}
+          <div style={dm.panel}>
+            <div style={dm.panelLabel}>SHIFT TIME</div>
+            <div style={dm.lcdWrap}>
+              <div style={dm.lcdGhost}>88:88:88</div>
+              <div style={{ ...dm.lcd, color: accent, textShadow: running ? `0 0 14px ${accent}88, 0 0 2px ${accent}` : "none" }}>{fmtClock(elapsed)}</div>
+            </div>
+
+            {/* 8 segments = 8 hours */}
+            <div style={dm.segRow}>
+              {Array.from({ length: 8 }).map((_, i) => {
+                const fill = Math.max(0, Math.min(1, elapsed / 3600000 - i));
+                return (
+                  <div key={i} style={dm.seg}>
+                    <div style={{ ...dm.segFill, width: `${fill * 100}%`, background: accent, boxShadow: fill > 0 ? `0 0 8px ${accent}77` : "none" }} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={dm.segLabels}><span>0h</span><span>4h</span><span>8h MAX</span></div>
+
+            <div style={dm.readout}>
+              {running ? (
+                <>AUTO-STOP IN <b style={{ color: accent }}>{fmtClock(remaining)}</b></>
+              ) : windowOpen ? (
+                <>PRESS START WHEN YOU GO ON DUTY</>
+              ) : (
+                <>OPENS IN <b style={{ color: accent }}>{st ? fmtClock(opensIn) : "--:--:--"}</b> · 14:00 → 06:00</>
+              )}
+            </div>
+
+            <button
+              className="gx-btn"
+              style={{ ...dm.btn, ...(running ? dm.btnStop : dm.btnStart), opacity: busy || (!running && !windowOpen) ? 0.4 : 1, cursor: busy || (!running && !windowOpen) ? "not-allowed" : "pointer" }}
+              disabled={busy || (!running && !windowOpen)}
+              onClick={running ? stop : start}
+            >
+              {running ? <Square size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
+              {running ? "STOP SHIFT" : "START SHIFT"}
+            </button>
+            {msg && <div style={{ ...dm.msg, color: msgColor }}>{msg.text}</div>}
+          </div>
+
+          {/* ---------- who is on duty ---------- */}
+          <div style={dm.panel}>
+            <div style={dm.panelLabel}>ON DUTY NOW</div>
+            <div style={dm.countRow}>
+              <Users size={22} color="#5EFFA0" />
+              <span style={dm.count}>{st ? pad2(st.on_duty) : "--"}</span>
+            </div>
+            <div style={dm.roster}>
+              {!st ? (
+                <div style={dm.rosterEmpty}>Loading…</div>
+              ) : roster.length === 0 ? (
+                <div style={dm.rosterEmpty}>Nobody is on duty</div>
+              ) : roster.map((o) => (
+                <div key={o.id} style={dm.rosterRow}>
+                  <span style={dm.rosterDot} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={dm.rosterName}>{o.name}{o.id === profile.id ? " (you)" : ""}</div>
+                    <div style={dm.rosterRank}>{o.rank}</div>
+                  </div>
+                  <div style={dm.rosterTime}>{fmtClock(Math.min(now - new Date(o.started_at).getTime(), DUTY_MAX_MS))}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-        {msg && <div style={{ ...dutyStyles.msg, color: msg.type === "error" ? "#f87171" : "#4ade80" }}>{msg.text}</div>}
-      </div>
-      <div style={dutyStyles.right}>
-        <button
-          className="gx-btn gx-btn-gold"
-          style={{ ...styles.btnGold, minWidth: 130, opacity: busy || (!running && !windowOpen) ? 0.5 : 1, background: running ? "#b3392f" : "#D4A72C", color: running ? "#fff" : "#1A1300" }}
-          disabled={busy || (!running && !windowOpen)}
-          onClick={running ? stop : start}
-        >
-          {running ? "Stop" : "Start"}
-        </button>
-        <div style={dutyStyles.count}><Users size={14} /> {st ? st.on_duty : "–"} on duty now</div>
       </div>
     </div>
   );
 }
 
-const dutyStyles = {
-  card: { background: "rgba(20,19,17,0.4)", backdropFilter: "blur(12px) saturate(140%)", WebkitBackdropFilter: "blur(12px) saturate(140%)", border: "1px solid rgba(212,167,44,0.16)", borderRadius: 12, padding: "18px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 20 },
-  left: { display: "flex", flexDirection: "column", gap: 4 },
-  right: { display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 },
-  label: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, letterSpacing: 1.5, fontWeight: 600, color: "#F4C744", fontFamily: "'Oswald', sans-serif" },
-  dot: { width: 9, height: 9, borderRadius: "50%", display: "inline-block" },
-  clock: { fontSize: 38, fontWeight: 600, fontFamily: "'Oswald', sans-serif", letterSpacing: 2, color: "#fff", fontVariantNumeric: "tabular-nums", direction: "ltr", textAlign: "left" },
-  hint: { fontSize: 12, color: "rgba(255,255,255,0.55)" },
-  msg: { fontSize: 13, marginTop: 4 },
-  count: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12, color: "rgba(255,255,255,0.7)" },
+const DM_FONT = "'Orbitron', 'Oswald', sans-serif";
+const DM_MONO = "'Share Tech Mono', ui-monospace, Menlo, monospace";
+const dm = {
+  bezel: { background: "linear-gradient(160deg, #1b1c19 0%, #0d0e0c 100%)", border: "1px solid rgba(212,167,44,0.28)", borderRadius: 18, padding: 10, marginBottom: 20, boxShadow: "0 18px 40px -20px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.06)" },
+  screen: { position: "relative", overflow: "hidden", background: "radial-gradient(120% 140% at 50% 0%, #0d1a13 0%, #060b08 70%)", border: "1px solid rgba(94,255,160,0.12)", borderRadius: 12, padding: "14px 16px 16px", boxShadow: "inset 0 0 40px rgba(0,0,0,0.65)" },
+  scan: { position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none", background: "repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0px, rgba(0,0,0,0.22) 1px, transparent 1px, transparent 3px)", mixBlendMode: "multiply" },
+  bar: { position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, marginBottom: 14, borderBottom: "1px solid rgba(94,255,160,0.14)", direction: "ltr" },
+  barLeft: { display: "flex", alignItems: "center", gap: 10 },
+  led: { width: 10, height: 10, borderRadius: "50%", display: "inline-block" },
+  title: { fontFamily: DM_FONT, fontSize: 12, fontWeight: 700, letterSpacing: 3, color: "#B9F5D2" },
+  chip: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 2, padding: "3px 10px", border: "1px solid", borderRadius: 4 },
+  panel: { display: "flex", flexDirection: "column", gap: 10, minWidth: 0, direction: "ltr", textAlign: "left" },
+  panelLabel: { fontFamily: DM_MONO, fontSize: 11, letterSpacing: 2.5, color: "rgba(185,245,210,0.5)" },
+  lcdWrap: { position: "relative", lineHeight: 1 },
+  lcdGhost: { position: "absolute", left: 0, top: 0, fontFamily: DM_FONT, fontWeight: 700, fontSize: 52, letterSpacing: 3, color: "rgba(94,255,160,0.07)", fontVariantNumeric: "tabular-nums", userSelect: "none" },
+  lcd: { position: "relative", fontFamily: DM_FONT, fontWeight: 700, fontSize: 52, letterSpacing: 3, fontVariantNumeric: "tabular-nums", transition: "color .4s ease" },
+  segRow: { display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 4, marginTop: 4 },
+  seg: { height: 8, borderRadius: 2, background: "rgba(94,255,160,0.09)", overflow: "hidden" },
+  segFill: { height: "100%", borderRadius: 2, transition: "width .9s linear" },
+  segLabels: { display: "flex", justifyContent: "space-between", fontFamily: DM_MONO, fontSize: 10, letterSpacing: 1.5, color: "rgba(185,245,210,0.4)" },
+  readout: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 1.5, color: "rgba(185,245,210,0.65)", minHeight: 18 },
+  btn: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", maxWidth: 280, padding: "12px 18px", borderRadius: 8, fontFamily: DM_FONT, fontSize: 13, fontWeight: 700, letterSpacing: 2, border: "1px solid" },
+  btnStart: { background: "rgba(94,255,160,0.12)", color: "#5EFFA0", borderColor: "rgba(94,255,160,0.7)", boxShadow: "0 0 18px -6px rgba(94,255,160,0.6)" },
+  btnStop: { background: "rgba(255,102,86,0.14)", color: "#ff7b6e", borderColor: "rgba(255,102,86,0.7)", boxShadow: "0 0 18px -6px rgba(255,102,86,0.6)" },
+  msg: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 0.5 },
+  countRow: { display: "flex", alignItems: "center", gap: 12 },
+  count: { fontFamily: DM_FONT, fontWeight: 700, fontSize: 46, lineHeight: 1, color: "#5EFFA0", textShadow: "0 0 14px rgba(94,255,160,0.5)", fontVariantNumeric: "tabular-nums" },
+  roster: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 190, overflowY: "auto", paddingRight: 4 },
+  rosterEmpty: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 1, color: "rgba(185,245,210,0.4)", padding: "10px 0" },
+  rosterRow: { display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", background: "rgba(94,255,160,0.05)", border: "1px solid rgba(94,255,160,0.12)", borderRadius: 6 },
+  rosterDot: { width: 7, height: 7, borderRadius: "50%", background: "#5EFFA0", boxShadow: "0 0 6px #5EFFA0", flexShrink: 0 },
+  rosterName: { fontSize: 13, fontWeight: 600, color: "#E8FBF0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  rosterRank: { fontFamily: DM_MONO, fontSize: 10.5, letterSpacing: 1, color: "rgba(185,245,210,0.5)" },
+  rosterTime: { fontFamily: DM_MONO, fontSize: 13, color: "#8FD9B0", fontVariantNumeric: "tabular-nums" },
 };
 
 
@@ -1715,8 +1808,6 @@ function Dashboard({ profile, openOwnProfile }) {
   const [opsCount, setOpsCount] = useState(0);
   const [dispatchTotalHours, setDispatchTotalHours] = useState(0);
   const canSeeDispatch = canSeeRoom(profile.rank, "dispatch");
-  const hourlyRate = getHourlyRate(profile.rank);
-  const weekSalary = weekHours * hourlyRate;
 
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -1751,12 +1842,11 @@ function Dashboard({ profile, openOwnProfile }) {
         </div>
       )}
       {profile.rank !== "Galaxy Citizen" && <DutyTimer profile={profile} onLogged={() => setReloadKey((k) => k + 1)} />}
-      <div style={{ ...styles.statsRow, gridTemplateColumns: `repeat(${canSeeDispatch ? 5 : 4}, 1fr)` }}>
+      <div style={{ ...styles.statsRow, gridTemplateColumns: `repeat(${canSeeDispatch ? 4 : 3}, 1fr)` }}>
         <StatCard icon={Clock} label="Total Hours" value={fmtHours(totalHours)} accent />
         <StatCard icon={Shield} label="Number of Logs" value={logsCount} />
         <StatCard icon={Radio} label="Number of Operations" value={opsCount} />
         {canSeeDispatch && <StatCard icon={Headphones} label="Total Dispatch Hours" value={fmtHours(dispatchTotalHours)} />}
-        <StatCard icon={Award} label="Weekly Salary" value={fmtMoney(weekSalary)} accent />
       </div>
       <div style={{ marginTop: 20 }}>
         <button className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={openOwnProfile}>Open Your Profile <ArrowRight size={15} /></button>
@@ -2117,8 +2207,11 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [logTab, setLogTab] = useState("duty");
   const [editingLogId, setEditingLogId] = useState(null);
+  const [savingLog, setSavingLog] = useState(false);
   const isOwn = profileId === me.id;
   const canEditLogs = can(me.rank, "duty", "edit_all");
+  // typing hours by hand: officers add their own; editing an existing log follows the permissions room
+  const showLogForm = editingLogId ? canEditLogs : (isOwn && me.rank !== "Galaxy Citizen");
   const canDeleteLogs = isOwn || can(me.rank, "duty", "delete_all");
   const iAmChief = isChief(me.rank);
   const canSeeDispatch = canSeeRoom(me.rank, "dispatch");
@@ -2149,9 +2242,6 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   const weekHours = logs.filter((l) => new Date(l.work_date) >= weekStart).reduce((s, l) => s + Number(l.duration_hours), 0);
   const dispatchTotalHours = dispatchLogs.reduce((s, l) => s + Number(l.duration_hours), 0);
   const dispatchWeekHours = dispatchLogs.filter((l) => new Date(l.work_date) >= weekStart).reduce((s, l) => s + Number(l.duration_hours), 0);
-  const hourlyRate = getHourlyRate(officer?.rank);
-  const weekSalary = weekHours * hourlyRate;
-  const totalSalary = totalHours * hourlyRate;
 
   const resetLogForm = () => {
     setWorkDate(new Date().toISOString().slice(0, 10)); setTimeIn(""); setTimeOut(""); setEditingLogId(null);
@@ -2167,16 +2257,19 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
 
   const addLog = async (e) => {
     e.preventDefault();
-    if (!editingLogId) return; // hours are created by the duty timer only
     const duration = computeDuration(timeIn, timeOut);
     if (duration === null) { showToast("error", "Invalid time format, e.g., 17 or 17:30"); return; }
+    setSavingLog(true);
     const payload = { work_date: workDate, time_in: timeIn, time_out: timeOut, duration_hours: duration };
     let error;
     if (editingLogId) {
       ({ error } = await supabase.from("duty_logs").update(payload).eq("id", editingLogId));
+    } else {
+      ({ error } = await supabase.from("duty_logs").insert({ ...payload, officer_id: me.id }));
     }
-    if (error) { showToast("error", "Failed to update log"); return; }
-    showToast("success", "Log updated");
+    setSavingLog(false);
+    if (error) { showToast("error", editingLogId ? "Failed to update log" : "Failed to submit log"); return; }
+    showToast("success", editingLogId ? "Log updated" : `Log submitted — ${fmtHours(duration)}`);
     resetLogForm(); load();
   };
 
@@ -2265,10 +2358,6 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
             <StatCard icon={Clock} label="This Week's Dispatch Hours" value={fmtHours(dispatchWeekHours)} />
           </div>
         )}
-        <div style={{ ...styles.statsRow, gridTemplateColumns: "repeat(2, 1fr)", marginTop: 14 }}>
-          <StatCard icon={Award} label="Weekly Salary" value={fmtMoney(weekSalary)} accent />
-          <StatCard icon={Award} label="Total Salary" value={fmtMoney(totalSalary)} />
-        </div>
       </div>
 
       {iAmChief && !isOwn && (
@@ -2293,9 +2382,9 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
         </div>
       )}
 
-      {canEditLogs && editingLogId && (
+      {showLogForm && (
         <div className="gx-glass-card" style={{ ...styles.sectionCard, marginTop: 16 }}>
-          <div style={styles.sectionHeader}>Edit Log</div>
+          <div style={styles.sectionHeader}>{editingLogId ? "Edit Log" : "Add Time Manually"}</div>
           <form onSubmit={addLog} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
             <div>
               <label style={styles.label}>Date</label>
@@ -2310,8 +2399,10 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
               <input style={styles.input} placeholder="e.g., 19 or 19:15" value={timeOut} onChange={(e) => setTimeOut(e.target.value)} />
             </div>
             <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}>
-              <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, flex: 1, justifyContent: "center" }}>Save Changes</button>
-              <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={resetLogForm}>Cancel</button>
+              <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, flex: 1, justifyContent: "center" }} disabled={savingLog}>
+                {savingLog ? "..." : editingLogId ? "Save Changes" : "Submit Log"}
+              </button>
+              {editingLogId && <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={resetLogForm}>Cancel</button>}
             </div>
           </form>
         </div>
