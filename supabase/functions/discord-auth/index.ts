@@ -29,6 +29,7 @@ const EMAIL_DOMAIN = "sheriff.local";
 const VALID_RANKS = [
   "Deputy", "Deputy First Class", "Master Deputy", "Sergent", "Lieutnant", "Capitan",
   "Major", "Division Chef", "Assistant Chef", "Management", "Under Sheriff", "Chef Sheriff",
+  "Galaxy Citizen",
 ];
 
 const corsHeaders = {
