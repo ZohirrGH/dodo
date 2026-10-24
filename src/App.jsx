@@ -922,6 +922,46 @@ export default function SheriffApp() {
     })();
   }, [userId, loadProfile]);
 
+  // Keep the rank in step with Discord while the page is open: Discord cannot notify the site when a role changes,
+  // so the open page re-checks every 30 s (only while visible) and whenever the person comes back to the tab.
+  const rankRef = useRef(null);
+  rankRef.current = profile?.rank ?? null;
+  useEffect(() => {
+    if (!userId) return undefined;
+    let running = false;
+    let lastRun = Date.now();
+    const check = async () => {
+      if (running || document.hidden || Date.now() - lastRun < 5000) return;
+      running = true;
+      lastRun = Date.now();
+      try {
+        const { data, error } = await supabase.functions.invoke("discord-auth", { body: { action: "sync" } });
+        if (!error) {
+          if (data?.rank && data.rank !== rankRef.current) loadProfile(userId);   // new rank: rooms and rights update at once
+        } else {
+          const info = await readFnError(error);
+          if (info?.error === "no_role" || info?.error === "not_in_server") {     // role removed in Discord: sign out
+            setAuthError(GATE_MESSAGES[info.error]);
+            try { sessionStorage.setItem("gx_manual_login", "1"); } catch { /* ignore */ }
+            await supabase.auth.signOut();
+          }
+          // any other error (network, server) is ignored on purpose
+        }
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(check, 30000);
+    const onVisible = () => { if (!document.hidden) check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", check);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", check);
+    };
+  }, [userId, loadProfile]);
+
   const logout = async () => {
     try { sessionStorage.setItem("gx_manual_login", "1"); } catch { /* ignore */ }
     await supabase.auth.signOut();
