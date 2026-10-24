@@ -20,7 +20,7 @@ const BACKGROUND_VIDEO_TYPE = "video/mp4";
 const DISCORD_INVITE_URL = "https://discord.gg/tWwmV44dhE";
 
 const FONTS = `
-@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
   --gx-gold: #D4A72C;
@@ -53,12 +53,12 @@ const FONTS = `
   50% { transform: translateY(-5px); }
 }
 @keyframes gxDmPulse {
-  0% { box-shadow: 0 0 0 0 rgba(94,255,160,0.6); }
-  70% { box-shadow: 0 0 0 9px rgba(94,255,160,0); }
-  100% { box-shadow: 0 0 0 0 rgba(94,255,160,0); }
+  0% { box-shadow: 0 0 0 0 rgba(59,160,255,0.6); }
+  70% { box-shadow: 0 0 0 9px rgba(59,160,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(59,160,255,0); }
 }
 .gx-dm-led { animation: gxDmPulse 1.6s ease-out infinite; }
-.gx-dm-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 22px; }
+.gx-dm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
 @media (max-width: 760px) { .gx-dm-grid { grid-template-columns: 1fr; } }
 
 .gx-video-wrap { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -2; overflow: hidden; background: #050505; }
@@ -1644,7 +1644,7 @@ function DutyTimer({ profile, onLogged }) {
   const opensIn = !running && st && !st.window_open && st.changes_at ? Math.max(0, new Date(st.changes_at).getTime() - now) : 0;
   const warn = running && remaining < 30 * 60 * 1000;
 
-  const accent = running ? (warn ? "#FFC24B" : "#5EFFA0") : windowOpen ? "#8FD9B0" : "#6B7F73";
+  const accent = running ? (warn ? "#FFB020" : "#3BA0FF") : windowOpen ? "#7FB8E8" : "#6C7480";
   const chip = running ? "ON DUTY" : windowOpen ? "READY" : "CLOSED";
   const roster = st?.on_duty_list || [];
 
@@ -1674,89 +1674,93 @@ function DutyTimer({ profile, onLogged }) {
     stopping.current = false;
   };
 
-  const msgColor = msg ? (msg.type === "error" ? "#ff7b6e" : msg.type === "info" ? "#FFC24B" : "#5EFFA0") : undefined;
+  const msgColor = msg ? (msg.type === "error" ? "#FF6B5E" : msg.type === "info" ? "#FFB020" : "#3DDC97") : undefined;
+
+  // circular gauge: one full turn = 8 hours
+  const R = 92, C = 2 * Math.PI * R;
+  const frac = Math.max(0, Math.min(1, elapsed / DUTY_MAX_MS));
 
   return (
-    <div className="gx-glass-card" style={dm.bezel}>
-      <div style={dm.screen}>
-        <div style={dm.scan} />
+    <div className="gx-glass-card" style={dm.card}>
+      <span style={{ ...dm.corner, top: 6, left: 6, borderTop: `2px solid ${accent}`, borderLeft: `2px solid ${accent}` }} />
+      <span style={{ ...dm.corner, top: 6, right: 6, borderTop: `2px solid ${accent}`, borderRight: `2px solid ${accent}` }} />
+      <span style={{ ...dm.corner, bottom: 6, left: 6, borderBottom: `2px solid ${accent}`, borderLeft: `2px solid ${accent}` }} />
+      <span style={{ ...dm.corner, bottom: 6, right: 6, borderBottom: `2px solid ${accent}`, borderRight: `2px solid ${accent}` }} />
 
-        {/* title bar */}
-        <div style={dm.bar}>
-          <div style={dm.barLeft}>
-            <span className={running ? "gx-dm-led" : undefined} style={{ ...dm.led, background: accent, boxShadow: running ? `0 0 10px ${accent}` : "none" }} />
-            <span style={dm.title}>DUTY MONITOR</span>
+      <div style={dm.head}>
+        <div style={dm.headLeft}>
+          <span className={running ? "gx-dm-led" : undefined} style={{ ...dm.led, background: accent }} />
+          <span style={dm.title}>DUTY STATUS</span>
+        </div>
+        <span style={{ ...dm.chip, background: running ? accent : "transparent", color: running ? "#071018" : accent, borderColor: accent }}>{chip}</span>
+      </div>
+
+      <div className="gx-dm-grid">
+        {/* ---------- gauge + controls ---------- */}
+        <div style={dm.gaugeCol}>
+          <div style={dm.gaugeWrap}>
+            <svg viewBox="0 0 220 220" width="220" height="220" style={{ display: "block" }}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <line key={i} x1="110" y1="4" x2="110" y2="14" stroke="rgba(255,255,255,0.28)" strokeWidth="2"
+                  transform={`rotate(${i * 45} 110 110)`} />
+              ))}
+              <circle cx="110" cy="110" r={R} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="12" />
+              <circle cx="110" cy="110" r={R} fill="none" stroke={accent} strokeWidth="12" strokeLinecap="butt"
+                strokeDasharray={`${C * frac} ${C}`} transform="rotate(-90 110 110)"
+                style={{ transition: "stroke-dasharray .9s linear, stroke .4s ease", filter: running ? `drop-shadow(0 0 6px ${accent}99)` : "none" }} />
+            </svg>
+            <div style={dm.gaugeCenter}>
+              <div style={dm.gaugeLabel}>SHIFT TIME</div>
+              <div style={{ ...dm.clock, color: running ? "#fff" : "rgba(255,255,255,0.45)" }}>{fmtClock(elapsed)}</div>
+              <div style={dm.gaugeSub}>MAX 08:00:00</div>
+            </div>
           </div>
-          <span style={{ ...dm.chip, color: accent, borderColor: accent }}>{chip}</span>
+
+          <div style={dm.readout}>
+            {running ? (
+              <>AUTO-STOP IN <b style={{ color: accent }}>{fmtClock(remaining)}</b></>
+            ) : windowOpen ? (
+              <>PRESS START WHEN YOU GO ON DUTY</>
+            ) : (
+              <>OPENS IN <b style={{ color: accent }}>{st ? fmtClock(opensIn) : "--:--:--"}</b> · 14:00 → 06:00</>
+            )}
+          </div>
+
+          <button
+            className="gx-btn"
+            style={{ ...dm.btn, ...(running ? dm.btnStop : dm.btnStart), opacity: busy || (!running && !windowOpen) ? 0.4 : 1, cursor: busy || (!running && !windowOpen) ? "not-allowed" : "pointer" }}
+            disabled={busy || (!running && !windowOpen)}
+            onClick={running ? stop : start}
+          >
+            {running ? <Square size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
+            {running ? "END SHIFT" : "START SHIFT"}
+          </button>
+          {msg && <div style={{ ...dm.msg, color: msgColor }}>{msg.text}</div>}
         </div>
 
-        <div className="gx-dm-grid" style={{ position: "relative", zIndex: 2 }}>
-          {/* ---------- stopwatch ---------- */}
-          <div style={dm.panel}>
-            <div style={dm.panelLabel}>SHIFT TIME</div>
-            <div style={dm.lcdWrap}>
-              <div style={dm.lcdGhost}>88:88:88</div>
-              <div style={{ ...dm.lcd, color: accent, textShadow: running ? `0 0 14px ${accent}88, 0 0 2px ${accent}` : "none" }}>{fmtClock(elapsed)}</div>
+        {/* ---------- who is on duty ---------- */}
+        <div style={dm.rosterCol}>
+          <div style={dm.countBox}>
+            <div>
+              <div style={dm.panelLabel}>ON DUTY NOW</div>
+              <div style={dm.count}>{st ? st.on_duty : "–"}</div>
             </div>
-
-            {/* 8 segments = 8 hours */}
-            <div style={dm.segRow}>
-              {Array.from({ length: 8 }).map((_, i) => {
-                const fill = Math.max(0, Math.min(1, elapsed / 3600000 - i));
-                return (
-                  <div key={i} style={dm.seg}>
-                    <div style={{ ...dm.segFill, width: `${fill * 100}%`, background: accent, boxShadow: fill > 0 ? `0 0 8px ${accent}77` : "none" }} />
-                  </div>
-                );
-              })}
-            </div>
-            <div style={dm.segLabels}><span>0h</span><span>4h</span><span>8h MAX</span></div>
-
-            <div style={dm.readout}>
-              {running ? (
-                <>AUTO-STOP IN <b style={{ color: accent }}>{fmtClock(remaining)}</b></>
-              ) : windowOpen ? (
-                <>PRESS START WHEN YOU GO ON DUTY</>
-              ) : (
-                <>OPENS IN <b style={{ color: accent }}>{st ? fmtClock(opensIn) : "--:--:--"}</b> · 14:00 → 06:00</>
-              )}
-            </div>
-
-            <button
-              className="gx-btn"
-              style={{ ...dm.btn, ...(running ? dm.btnStop : dm.btnStart), opacity: busy || (!running && !windowOpen) ? 0.4 : 1, cursor: busy || (!running && !windowOpen) ? "not-allowed" : "pointer" }}
-              disabled={busy || (!running && !windowOpen)}
-              onClick={running ? stop : start}
-            >
-              {running ? <Square size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
-              {running ? "STOP SHIFT" : "START SHIFT"}
-            </button>
-            {msg && <div style={{ ...dm.msg, color: msgColor }}>{msg.text}</div>}
+            <Users size={34} color={accent} style={{ opacity: 0.85 }} />
           </div>
-
-          {/* ---------- who is on duty ---------- */}
-          <div style={dm.panel}>
-            <div style={dm.panelLabel}>ON DUTY NOW</div>
-            <div style={dm.countRow}>
-              <Users size={22} color="#5EFFA0" />
-              <span style={dm.count}>{st ? pad2(st.on_duty) : "--"}</span>
-            </div>
-            <div style={dm.roster}>
-              {!st ? (
-                <div style={dm.rosterEmpty}>Loading…</div>
-              ) : roster.length === 0 ? (
-                <div style={dm.rosterEmpty}>Nobody is on duty</div>
-              ) : roster.map((o) => (
-                <div key={o.id} style={dm.rosterRow}>
-                  <span style={dm.rosterDot} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={dm.rosterName}>{o.name}{o.id === profile.id ? " (you)" : ""}</div>
-                    <div style={dm.rosterRank}>{o.rank}</div>
-                  </div>
-                  <div style={dm.rosterTime}>{fmtClock(Math.min(now - new Date(o.started_at).getTime(), DUTY_MAX_MS))}</div>
+          <div style={dm.roster}>
+            {!st ? (
+              <div style={dm.rosterEmpty}>Loading…</div>
+            ) : roster.length === 0 ? (
+              <div style={dm.rosterEmpty}>Nobody is on duty right now</div>
+            ) : roster.map((o) => (
+              <div key={o.id} style={{ ...dm.rosterRow, borderLeftColor: o.id === profile.id ? "#FFB020" : "#3BA0FF" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={dm.rosterName}>{o.name}{o.id === profile.id ? " (you)" : ""}</div>
+                  <div style={dm.rosterRank}>{o.rank}</div>
                 </div>
-              ))}
-            </div>
+                <div style={dm.rosterTime}>{fmtClock(Math.min(now - new Date(o.started_at).getTime(), DUTY_MAX_MS))}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1764,40 +1768,36 @@ function DutyTimer({ profile, onLogged }) {
   );
 }
 
-const DM_FONT = "'Orbitron', 'Oswald', sans-serif";
-const DM_MONO = "'Share Tech Mono', ui-monospace, Menlo, monospace";
+const DM_HEAD = "'Oswald', sans-serif";
 const dm = {
-  bezel: { background: "linear-gradient(160deg, #1b1c19 0%, #0d0e0c 100%)", border: "1px solid rgba(212,167,44,0.28)", borderRadius: 18, padding: 10, marginBottom: 20, boxShadow: "0 18px 40px -20px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.06)" },
-  screen: { position: "relative", overflow: "hidden", background: "radial-gradient(120% 140% at 50% 0%, #0d1a13 0%, #060b08 70%)", border: "1px solid rgba(94,255,160,0.12)", borderRadius: 12, padding: "14px 16px 16px", boxShadow: "inset 0 0 40px rgba(0,0,0,0.65)" },
-  scan: { position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none", background: "repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0px, rgba(0,0,0,0.22) 1px, transparent 1px, transparent 3px)", mixBlendMode: "multiply" },
-  bar: { position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, marginBottom: 14, borderBottom: "1px solid rgba(94,255,160,0.14)", direction: "ltr" },
-  barLeft: { display: "flex", alignItems: "center", gap: 10 },
-  led: { width: 10, height: 10, borderRadius: "50%", display: "inline-block" },
-  title: { fontFamily: DM_FONT, fontSize: 12, fontWeight: 700, letterSpacing: 3, color: "#B9F5D2" },
-  chip: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 2, padding: "3px 10px", border: "1px solid", borderRadius: 4 },
-  panel: { display: "flex", flexDirection: "column", gap: 10, minWidth: 0, direction: "ltr", textAlign: "left" },
-  panelLabel: { fontFamily: DM_MONO, fontSize: 11, letterSpacing: 2.5, color: "rgba(185,245,210,0.5)" },
-  lcdWrap: { position: "relative", lineHeight: 1 },
-  lcdGhost: { position: "absolute", left: 0, top: 0, fontFamily: DM_FONT, fontWeight: 700, fontSize: 52, letterSpacing: 3, color: "rgba(94,255,160,0.07)", fontVariantNumeric: "tabular-nums", userSelect: "none" },
-  lcd: { position: "relative", fontFamily: DM_FONT, fontWeight: 700, fontSize: 52, letterSpacing: 3, fontVariantNumeric: "tabular-nums", transition: "color .4s ease" },
-  segRow: { display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 4, marginTop: 4 },
-  seg: { height: 8, borderRadius: 2, background: "rgba(94,255,160,0.09)", overflow: "hidden" },
-  segFill: { height: "100%", borderRadius: 2, transition: "width .9s linear" },
-  segLabels: { display: "flex", justifyContent: "space-between", fontFamily: DM_MONO, fontSize: 10, letterSpacing: 1.5, color: "rgba(185,245,210,0.4)" },
-  readout: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 1.5, color: "rgba(185,245,210,0.65)", minHeight: 18 },
-  btn: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", maxWidth: 280, padding: "12px 18px", borderRadius: 8, fontFamily: DM_FONT, fontSize: 13, fontWeight: 700, letterSpacing: 2, border: "1px solid" },
-  btnStart: { background: "rgba(94,255,160,0.12)", color: "#5EFFA0", borderColor: "rgba(94,255,160,0.7)", boxShadow: "0 0 18px -6px rgba(94,255,160,0.6)" },
-  btnStop: { background: "rgba(255,102,86,0.14)", color: "#ff7b6e", borderColor: "rgba(255,102,86,0.7)", boxShadow: "0 0 18px -6px rgba(255,102,86,0.6)" },
-  msg: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 0.5 },
-  countRow: { display: "flex", alignItems: "center", gap: 12 },
-  count: { fontFamily: DM_FONT, fontWeight: 700, fontSize: 46, lineHeight: 1, color: "#5EFFA0", textShadow: "0 0 14px rgba(94,255,160,0.5)", fontVariantNumeric: "tabular-nums" },
-  roster: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 190, overflowY: "auto", paddingRight: 4 },
-  rosterEmpty: { fontFamily: DM_MONO, fontSize: 12, letterSpacing: 1, color: "rgba(185,245,210,0.4)", padding: "10px 0" },
-  rosterRow: { display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", background: "rgba(94,255,160,0.05)", border: "1px solid rgba(94,255,160,0.12)", borderRadius: 6 },
-  rosterDot: { width: 7, height: 7, borderRadius: "50%", background: "#5EFFA0", boxShadow: "0 0 6px #5EFFA0", flexShrink: 0 },
-  rosterName: { fontSize: 13, fontWeight: 600, color: "#E8FBF0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  rosterRank: { fontFamily: DM_MONO, fontSize: 10.5, letterSpacing: 1, color: "rgba(185,245,210,0.5)" },
-  rosterTime: { fontFamily: DM_MONO, fontSize: 13, color: "#8FD9B0", fontVariantNumeric: "tabular-nums" },
+  card: { position: "relative", background: "repeating-linear-gradient(135deg, rgba(255,255,255,0.018) 0px, rgba(255,255,255,0.018) 2px, transparent 2px, transparent 8px), linear-gradient(180deg, #14171c 0%, #0b0d10 100%)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, padding: "20px 22px 22px", marginBottom: 20, boxShadow: "0 16px 36px -18px rgba(0,0,0,0.85)" },
+  corner: { position: "absolute", width: 14, height: 14, pointerEvents: "none" },
+  head: { display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, marginBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.08)", direction: "ltr" },
+  headLeft: { display: "flex", alignItems: "center", gap: 10 },
+  led: { width: 9, height: 9, borderRadius: "50%", display: "inline-block" },
+  title: { fontFamily: DM_HEAD, fontSize: 14, fontWeight: 600, letterSpacing: 3, color: "rgba(255,255,255,0.85)" },
+  chip: { fontFamily: DM_HEAD, fontSize: 12, fontWeight: 600, letterSpacing: 2, padding: "3px 12px", border: "1px solid", borderRadius: 2 },
+  gaugeCol: { display: "flex", flexDirection: "column", alignItems: "center", gap: 12, direction: "ltr" },
+  gaugeWrap: { position: "relative", width: 220, height: 220 },
+  gaugeCenter: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 },
+  gaugeLabel: { fontFamily: DM_HEAD, fontSize: 11, letterSpacing: 3, color: "rgba(255,255,255,0.45)" },
+  clock: { fontFamily: DM_HEAD, fontSize: 38, fontWeight: 600, letterSpacing: 1.5, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, transition: "color .3s ease" },
+  gaugeSub: { fontFamily: DM_HEAD, fontSize: 10.5, letterSpacing: 2, color: "rgba(255,255,255,0.32)" },
+  readout: { fontFamily: DM_HEAD, fontSize: 12.5, letterSpacing: 2, color: "rgba(255,255,255,0.6)", textAlign: "center", minHeight: 18 },
+  btn: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", maxWidth: 260, padding: "13px 20px", fontFamily: DM_HEAD, fontSize: 14, fontWeight: 600, letterSpacing: 3, border: "none", clipPath: "polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%)", transition: "filter .2s ease, transform .2s ease" },
+  btnStart: { background: "#3BA0FF", color: "#06121E" },
+  btnStop: { background: "#E5483B", color: "#fff" },
+  msg: { fontSize: 12.5, textAlign: "center" },
+  rosterCol: { display: "flex", flexDirection: "column", gap: 12, minWidth: 0, direction: "ltr", textAlign: "left" },
+  countBox: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4 },
+  panelLabel: { fontFamily: DM_HEAD, fontSize: 11, letterSpacing: 3, color: "rgba(255,255,255,0.45)" },
+  count: { fontFamily: DM_HEAD, fontSize: 56, fontWeight: 600, lineHeight: 1.05, color: "#fff", fontVariantNumeric: "tabular-nums" },
+  roster: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 210, overflowY: "auto", paddingRight: 4 },
+  rosterEmpty: { fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "12px 2px" },
+  rosterRow: { display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.035)", borderLeft: "3px solid #3BA0FF", borderRadius: 2 },
+  rosterName: { fontSize: 13.5, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  rosterRank: { fontFamily: DM_HEAD, fontSize: 11, letterSpacing: 1.5, color: "rgba(255,255,255,0.45)", textTransform: "uppercase" },
+  rosterTime: { fontFamily: DM_HEAD, fontSize: 15, letterSpacing: 1, color: "rgba(255,255,255,0.75)", fontVariantNumeric: "tabular-nums" },
 };
 
 
