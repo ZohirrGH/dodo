@@ -922,16 +922,41 @@ export default function SheriffApp() {
     })();
   }, [userId, loadProfile]);
 
-  // Keep the rank in step with Discord while the page is open: Discord cannot notify the site when a role changes,
-  // so the open page re-checks every 30 s (only while visible) and whenever the person comes back to the tab.
+  // Keep the rank in step with Discord while the page is open. Discord cannot notify the site when a role changes,
+  // so a server job (pg_cron -> discord-auth "sync_all", every 10 s) writes the new rank / name into the profile.
+  //  - fast check: the open page reads its own profile row every 5 s (a plain database read, no function call)
+  //  - slow check: every 2 min it also asks Discord through the function, only to sign out someone who lost every role
   const rankRef = useRef(null);
+  const nameRef = useRef(null);
   rankRef.current = profile?.rank ?? null;
+  nameRef.current = profile?.name ?? null;
+  useEffect(() => {
+    if (!userId) return undefined;
+    let reading = false;
+    const quickCheck = async () => {
+      if (reading || document.hidden) return;
+      reading = true;
+      try {
+        const { data } = await supabase.from("profiles").select("rank, name").eq("id", userId).maybeSingle();
+        if (data && (data.rank !== rankRef.current || data.name !== nameRef.current)) loadProfile(userId);   // rooms and rights update at once
+      } catch { /* ignore: next tick tries again */ } finally {
+        reading = false;
+      }
+    };
+    const quickTimer = setInterval(quickCheck, 5000);
+    window.addEventListener("focus", quickCheck);
+    return () => {
+      clearInterval(quickTimer);
+      window.removeEventListener("focus", quickCheck);
+    };
+  }, [userId, loadProfile]);
+
   useEffect(() => {
     if (!userId) return undefined;
     let running = false;
     let lastRun = Date.now();
     const check = async () => {
-      if (running || document.hidden || Date.now() - lastRun < 5000) return;
+      if (running || document.hidden || Date.now() - lastRun < 20000) return;
       running = true;
       lastRun = Date.now();
       try {
@@ -951,7 +976,7 @@ export default function SheriffApp() {
         running = false;
       }
     };
-    const timer = setInterval(check, 30000);
+    const timer = setInterval(check, 120000);
     const onVisible = () => { if (!document.hidden) check(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", check);

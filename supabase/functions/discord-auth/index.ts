@@ -5,6 +5,7 @@
 //   { action: "sync" }  + user session      -> { ok, rank }         (re-checks roles of someone already signed in)
 //   { action: "relay_store", code, redirectUri, state } -> { ok }   (finishes a login for the tab that is waiting)
 //   { action: "relay_poll", state }         -> { ok, pending } | { ok, token_hash }   (that waiting tab asks for the result)
+//   { action: "sync_all" }                  -> { ok, checked, changed }   (called by pg_cron every 10 s: refreshes everybody's rank/name)
 //
 // Errors are JSON: { error: "<code>", message: "<text>" }
 // codes: not_in_server | no_role | badge_conflict | bad_code | unauthorized | bad_request | server_error
@@ -64,6 +65,7 @@ serve(async (req) => {
     if (body?.action === "sync") return json(await handleSync(req));
     if (body?.action === "relay_store") return json(await handleRelayStore(body));
     if (body?.action === "relay_poll") return json(await handleRelayPoll(body));
+    if (body?.action === "sync_all") return json(await handleSyncAll());
     throw new Fail("bad_request", "Unknown action", 400);
   } catch (e) {
     if (e instanceof Fail) return json({ error: e.code, message: e.message }, e.status);
@@ -86,18 +88,28 @@ async function getMember(discordId: string): Promise<Member | null> {
   return await res.json();
 }
 
-// Highest priority wins when someone has several mapped roles
-async function resolveRank(roleIds: string[]): Promise<string | null> {
+type RoleMapRow = { discord_role_id: string | number; rank: string; priority: number };
+
+async function loadRoleMap(): Promise<RoleMapRow[]> {
   const { data, error } = await admin.from("discord_role_map").select("discord_role_id, rank, priority");
   if (error) throw error;
+  return (data ?? []) as RoleMapRow[];
+}
+
+// Highest priority wins when someone has several mapped roles
+function pickRank(map: RoleMapRow[], roleIds: string[]): string | null {
   const mine = new Set(roleIds);
   let best: { rank: string; priority: number } | null = null;
-  for (const row of data ?? []) {
+  for (const row of map) {
     if (!mine.has(String(row.discord_role_id))) continue;
     if (!VALID_RANKS.includes(row.rank)) continue;
     if (!best || row.priority > best.priority) best = { rank: row.rank, priority: row.priority };
   }
   return best?.rank ?? null;
+}
+
+async function resolveRank(roleIds: string[]): Promise<string | null> {
+  return pickRank(await loadRoleMap(), roleIds);
 }
 
 // Server nickname -> display name + badge number.
@@ -300,6 +312,48 @@ async function handleRelayPoll(body: { state?: string }) {
   const payload = data.payload as { token_hash?: string; error?: string; message?: string };
   if (payload.token_hash) return { ok: true, token_hash: payload.token_hash };
   throw new Fail(payload.error ?? "server_error", payload.message ?? "Sign-in failed, try again", 400);
+}
+
+// ---------------------------------------------------------------- background sync
+// Called by pg_cron every 10 seconds. Re-reads every linked officer's Discord roles and writes ONLY what changed
+// (name / rank / missing avatar), so nothing is rewritten on quiet ticks. People who left the server or lost every
+// mapped role are left alone here: their own page signs them out on its next check (action "sync").
+// A throttle slot makes sure the endpoint can not be hammered into Discord's rate limits.
+
+async function handleSyncAll() {
+  const { data: slot, error: slotErr } = await admin.rpc("take_role_sync_slot", { p_seconds: 8 });
+  if (slotErr) throw slotErr;
+  if (!slot) return { ok: true, skipped: "throttled" };
+
+  const map = await loadRoleMap();
+  const { data: rows, error } = await admin.from("profiles")
+    .select("id, discord_id, name, rank, avatar_url").not("discord_id", "is", null);
+  if (error) throw error;
+
+  let changed = 0;
+  const list = rows ?? [];
+  for (let i = 0; i < list.length; i += 5) {
+    await Promise.all(list.slice(i, i + 5).map(async (p) => {
+      try {
+        const member = await getMember(String(p.discord_id));
+        if (!member) return;
+        const rank = pickRank(map, member.roles ?? []);
+        if (!rank) return;
+        const info = describe(member);
+        const patch: Record<string, unknown> = {};
+        if (info.name && info.name !== p.name) patch.name = info.name;
+        if (rank !== p.rank) patch.rank = rank;
+        if (!p.avatar_url && info.avatar) patch.avatar_url = info.avatar;
+        if (Object.keys(patch).length === 0) return;
+        const { error: upErr } = await admin.from("profiles").update(patch).eq("id", p.id);
+        if (upErr) throw upErr;
+        changed++;
+      } catch (e) {
+        console.error("sync_all: profile", p.id, "failed:", e);
+      }
+    }));
+  }
+  return { ok: true, checked: list.length, changed };
 }
 
 async function handleSync(req: Request) {
