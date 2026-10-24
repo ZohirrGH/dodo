@@ -334,6 +334,11 @@ textarea:focus-visible,
   color: var(--gx-gold-bright); background: rgba(212,167,44,0.1); border: 1px solid rgba(212,167,44,0.45);
   border-radius: 999px; padding: 4px 14px; cursor: pointer; }
 .gx-uni-code:hover { background: rgba(212,167,44,0.22); }
+.gx-uni-item.lifted .gx-uni-inner { transform: translateY(-22px) scale(1.12); }
+.gx-uni-item.lifted .gx-uni-card { border-color: #fff; box-shadow: 0 0 0 2px var(--gx-gold-bright), 0 0 56px rgba(244,199,68,0.7), 0 30px 50px rgba(0,0,0,0.65); }
+.gx-uni.moving .gx-uni-item:not(.lifted) { cursor: copy; }
+.gx-uni-moving { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; margin: 10px auto 0; max-width: 760px;
+  padding: 10px 16px; border-radius: 10px; font-size: 13px; color: #F4C744; background: rgba(212,167,44,0.12); border: 1px solid rgba(212,167,44,0.45); }
 .gx-uni-dots { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
 .gx-uni-dots span { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; transition: .3s; }
 .gx-uni-dots span.on { background: var(--gx-gold); width: 24px; border-radius: 6px; }
@@ -411,6 +416,7 @@ const ACTION_GROUPS = [
     { key: "edit_all", label: "Edit anyone's cards" },
     { key: "delete_own", label: "Delete their own cards" },
     { key: "delete_all", label: "Delete anyone's cards" },
+    { key: "reorder", label: "Reorder the cards", hint: "Right-click a card to lift it, then click the place where it should go" },
   ] },
   { room: "vacations", label: "Vacations", icon: Plane, actions: [
     { key: "create", label: "Submit vacation requests" },
@@ -434,7 +440,7 @@ function defaultActionsFor(rank) {
     tests: records(advanced, chief),
     dispatch: records(advanced, chief),
     // Uniform cards: closed for everybody; the Chef Sheriff opens them rank by rank in the permissions room
-    uniform: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief },
+    uniform: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief, reorder: chief },
     vacations: { create: write, review: management },
   };
 }
@@ -1757,6 +1763,7 @@ function UniformView({ me, showToast }) {
   const [code, setCode] = useState("");
   const [imgFile, setImgFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [lifted, setLifted] = useState(null);   // id of the card being moved
   const galleryRef = useRef(null);
   const formRef = useRef(null);
   const [width, setWidth] = useState(900);
@@ -1774,7 +1781,7 @@ function UniformView({ me, showToast }) {
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("uniforms").select("*");
     if (error) { console.error("load uniforms error:", error); return; }
-    const sorted = (data || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
+    const sorted = (data || []).slice().sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9) || new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
     setItems(sorted);
     if (focusId.current) {
       // a card was just added or edited: bring it to the centre
@@ -1818,6 +1825,7 @@ function UniformView({ me, showToast }) {
   }, []);
 
   const onDown = (e) => {
+    if (e.button !== 0) return;   // a right-click only lifts a card, it never rotates the gallery
     dragged.current = false;
     drag.current = { startX: e.clientX, moved: false, onCode: !!e.target.closest(".gx-uni-code") };
   };
@@ -1836,6 +1844,36 @@ function UniformView({ me, showToast }) {
     try { navigator.clipboard?.writeText(text); } catch { /* ignore */ }
     setCopied(true);
     setTimeout(() => setCopied(false), 1400);
+  };
+
+  // --- move a card: right-click lifts it, clicking another card drops it at that card's place ------------
+  const canReorder = can(me.rank, "uniform", "reorder");
+  useEffect(() => {
+    if (!lifted) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setLifted(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lifted]);
+
+  const dropAt = async (index) => {
+    const from = items.findIndex((x) => x.id === lifted);
+    setLifted(null);
+    if (from < 0 || from === index) return;
+    const next = items.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(index, 0, moved);
+    setItems(next.map((x, i) => ({ ...x, sort_order: i + 1 })));   // show it at once, the server confirms below
+    setCurrent(index);
+    const { error } = await supabase.rpc("reorder_uniforms", { p_ids: next.map((x) => x.id) });
+    if (error) { showToast("error", "Could not save the new order"); load(); return; }
+    showToast("success", "Card moved");
+  };
+
+  const onCardClick = (i) => {
+    if (dragged.current) return;
+    if (!lifted) { go(i); return; }
+    if (items[i]?.id === lifted) { setLifted(null); return; }
+    dropAt(i);
   };
 
   // --- add / edit / delete -------------------------------------------------
@@ -1909,7 +1947,13 @@ function UniformView({ me, showToast }) {
       <div style={{ textAlign: "center", opacity: 0.7, fontSize: 13, marginBottom: 4 }}>
         Click any card to bring it to the center. Hover to enlarge it. Click a code to copy it.
       </div>
-      <div className="gx-uni" ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { drag.current = { startX: null, moved: false, idx: null, onCode: false }; }}>
+      {lifted && (
+        <div className="gx-uni-moving">
+          <span>Moving <b>{items.find((x) => x.id === lifted)?.name || items.find((x) => x.id === lifted)?.rank}</b> — click the card whose place you want (use the mouse wheel or the dots to reach it).</span>
+          <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, padding: "5px 12px" }} onClick={() => setLifted(null)}>Cancel</button>
+        </div>
+      )}
+      <div className={`gx-uni${lifted ? " moving" : ""}`} ref={galleryRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { drag.current = { startX: null, moved: false, idx: null, onCode: false }; }}>
         {n === 0 && <div style={{ ...styles.emptyState, position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>No uniform cards yet</div>}
         <div className="gx-uni-stage">
           {items.map((it, i) => {
@@ -1918,7 +1962,7 @@ function UniformView({ me, showToast }) {
             return (
               <div
                 key={it.id}
-                className={`gx-uni-item${a === 0 ? " active" : ""}`}
+                className={`gx-uni-item${a === 0 ? " active" : ""}${lifted === it.id ? " lifted" : ""}`}
                 style={{
                   transform: `translateX(${o * step}px) translateZ(${-a * 90}px) rotateY(${-o * 16}deg) scale(${a === 0 ? 1.08 : 1})`,
                   zIndex: 50 - a,
@@ -1926,7 +1970,12 @@ function UniformView({ me, showToast }) {
                   filter: a === 0 ? "none" : `brightness(${1 - a * 0.12})`,
                   pointerEvents: a > 3 ? "none" : "auto",
                 }}
-                onClick={() => { if (!dragged.current) go(i); }}
+                onClick={() => onCardClick(i)}
+                onContextMenu={(e) => {
+                  if (!canReorder) return;
+                  e.preventDefault();
+                  setLifted((cur) => (cur === it.id ? null : it.id));
+                }}
                 data-uni={i}
               >
                 <div className="gx-uni-inner">
@@ -1953,13 +2002,16 @@ function UniformView({ me, showToast }) {
         {items.map((it, i) => <span key={it.id} className={i === current ? "on" : ""} onClick={() => go(i)} />)}
       </div>
 
-      {(canCreate || canEdit || canDelete) && (
+      {(canCreate || canEdit || canDelete || (canReorder && n > 1)) && (
         <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap", marginTop: 18 }}>
           {canCreate && !formOpen && (
             <button type="button" className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={openAdd}><Plus size={15} /> Add card</button>
           )}
           {canEdit && (
             <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => openEdit(cur)}>✎ Edit {cur.name || cur.rank}</button>
+          )}
+          {canReorder && n > 1 && cur && !lifted && (
+            <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => setLifted(cur.id)}>⇄ Move {cur.name || cur.rank}</button>
           )}
           {canDelete && (
             <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, color: "#E0776A" }} onClick={() => deleteItem(cur.id)}>✕ Delete</button>
