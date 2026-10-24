@@ -53,9 +53,9 @@ const FONTS = `
   50% { transform: translateY(-5px); }
 }
 @keyframes gxDmPulse {
-  0% { box-shadow: 0 0 0 0 rgba(59,160,255,0.6); }
-  70% { box-shadow: 0 0 0 9px rgba(59,160,255,0); }
-  100% { box-shadow: 0 0 0 0 rgba(59,160,255,0); }
+  0% { box-shadow: 0 0 0 0 rgba(212,167,44,0.6); }
+  70% { box-shadow: 0 0 0 9px rgba(212,167,44,0); }
+  100% { box-shadow: 0 0 0 0 rgba(212,167,44,0); }
 }
 .gx-dm-led { animation: gxDmPulse 1.6s ease-out infinite; }
 .gx-dm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
@@ -1644,7 +1644,7 @@ function DutyTimer({ profile, onLogged }) {
   const opensIn = !running && st && !st.window_open && st.changes_at ? Math.max(0, new Date(st.changes_at).getTime() - now) : 0;
   const warn = running && remaining < 30 * 60 * 1000;
 
-  const accent = running ? (warn ? "#FFB020" : "#3BA0FF") : windowOpen ? "#7FB8E8" : "#6C7480";
+  const accent = running ? (warn ? "#FF7A45" : "#D4A72C") : windowOpen ? "#C9B16A" : "#6C7480";
   const chip = running ? "ON DUTY" : windowOpen ? "READY" : "CLOSED";
   const roster = st?.on_duty_list || [];
 
@@ -1674,7 +1674,7 @@ function DutyTimer({ profile, onLogged }) {
     stopping.current = false;
   };
 
-  const msgColor = msg ? (msg.type === "error" ? "#FF6B5E" : msg.type === "info" ? "#FFB020" : "#3DDC97") : undefined;
+  const msgColor = msg ? (msg.type === "error" ? "#FF6B5E" : msg.type === "info" ? "#FF7A45" : "#3DDC97") : undefined;
 
   // circular gauge: one full turn = 8 hours
   const R = 92, C = 2 * Math.PI * R;
@@ -1692,7 +1692,7 @@ function DutyTimer({ profile, onLogged }) {
           <span className={running ? "gx-dm-led" : undefined} style={{ ...dm.led, background: accent }} />
           <span style={dm.title}>DUTY STATUS</span>
         </div>
-        <span style={{ ...dm.chip, background: running ? accent : "transparent", color: running ? "#071018" : accent, borderColor: accent }}>{chip}</span>
+        <span style={{ ...dm.chip, background: running ? accent : "transparent", color: running ? "#1A1300" : accent, borderColor: accent }}>{chip}</span>
       </div>
 
       <div className="gx-dm-grid">
@@ -1753,7 +1753,7 @@ function DutyTimer({ profile, onLogged }) {
             ) : roster.length === 0 ? (
               <div style={dm.rosterEmpty}>Nobody is on duty right now</div>
             ) : roster.map((o) => (
-              <div key={o.id} style={{ ...dm.rosterRow, borderLeftColor: o.id === profile.id ? "#FFB020" : "#3BA0FF" }}>
+              <div key={o.id} style={{ ...dm.rosterRow, borderLeftColor: o.id === profile.id ? "#F4C744" : "#D4A72C" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={dm.rosterName}>{o.name}{o.id === profile.id ? " (you)" : ""}</div>
                   <div style={dm.rosterRank}>{o.rank}</div>
@@ -1770,7 +1770,7 @@ function DutyTimer({ profile, onLogged }) {
 
 const DM_HEAD = "'Oswald', sans-serif";
 const dm = {
-  card: { position: "relative", background: "linear-gradient(135deg, rgba(59,160,255,0.10) 0%, rgba(20,19,17,0.40) 55%)", backdropFilter: "blur(12px) saturate(140%)", WebkitBackdropFilter: "blur(12px) saturate(140%)", border: "1px solid rgba(212,167,44,0.16)", borderRadius: 12, padding: "20px 22px 22px", marginBottom: 20 },
+  card: { position: "relative", background: "linear-gradient(135deg, rgba(212,167,44,0.12) 0%, rgba(20,19,17,0.40) 55%)", backdropFilter: "blur(12px) saturate(140%)", WebkitBackdropFilter: "blur(12px) saturate(140%)", border: "1px solid rgba(212,167,44,0.16)", borderRadius: 12, padding: "20px 22px 22px", marginBottom: 20 },
   corner: { position: "absolute", width: 14, height: 14, pointerEvents: "none" },
   head: { display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, marginBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.08)", direction: "ltr" },
   headLeft: { display: "flex", alignItems: "center", gap: 10 },
@@ -1785,7 +1785,7 @@ const dm = {
   gaugeSub: { fontFamily: DM_HEAD, fontSize: 10.5, letterSpacing: 2, color: "rgba(255,255,255,0.32)" },
   readout: { fontFamily: DM_HEAD, fontSize: 12.5, letterSpacing: 2, color: "rgba(255,255,255,0.6)", textAlign: "center", minHeight: 18 },
   btn: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", maxWidth: 260, padding: "13px 20px", fontFamily: DM_HEAD, fontSize: 14, fontWeight: 600, letterSpacing: 3, border: "none", clipPath: "polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%)", transition: "filter .2s ease, transform .2s ease" },
-  btnStart: { background: "#3BA0FF", color: "#06121E" },
+  btnStart: { background: "#D4A72C", color: "#1A1300" },
   btnStop: { background: "#E5483B", color: "#fff" },
   msg: { fontSize: 12.5, textAlign: "center" },
   rosterCol: { display: "flex", flexDirection: "column", gap: 12, minWidth: 0, direction: "ltr", textAlign: "left" },
@@ -1794,7 +1794,7 @@ const dm = {
   count: { fontFamily: DM_HEAD, fontSize: 56, fontWeight: 600, lineHeight: 1.05, color: "#fff", fontVariantNumeric: "tabular-nums" },
   roster: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 210, overflowY: "auto", paddingRight: 4 },
   rosterEmpty: { fontSize: 13, color: "rgba(255,255,255,0.4)", padding: "12px 2px" },
-  rosterRow: { display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.035)", borderLeft: "3px solid #3BA0FF", borderRadius: 2 },
+  rosterRow: { display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.035)", borderLeft: "3px solid #D4A72C", borderRadius: 2 },
   rosterName: { fontSize: 13.5, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   rosterRank: { fontFamily: DM_HEAD, fontSize: 11, letterSpacing: 1.5, color: "rgba(255,255,255,0.45)", textTransform: "uppercase" },
   rosterTime: { fontFamily: DM_HEAD, fontSize: 15, letterSpacing: 1, color: "rgba(255,255,255,0.75)", fontVariantNumeric: "tabular-nums" },
