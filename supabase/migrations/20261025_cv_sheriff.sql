@@ -1,5 +1,5 @@
 -- CV Sheriff recruitment flow.
--- NOT YET APPLIED to project lfpbkvfcwbzqpjxcsowz: apply only after the owner's OK.
+-- Applied to project lfpbkvfcwbzqpjxcsowz on 2026-10-24 (kept here for the record).
 --
 -- What this does
 --   1. New rank "Galaxy Citizen" (profiles + role_permissions check constraints, role_permissions row,
