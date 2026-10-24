@@ -1770,7 +1770,7 @@ function DutyTimer({ profile, onLogged }) {
 
 const DM_HEAD = "'Oswald', sans-serif";
 const dm = {
-  card: { position: "relative", background: "repeating-linear-gradient(135deg, rgba(255,255,255,0.018) 0px, rgba(255,255,255,0.018) 2px, transparent 2px, transparent 8px), linear-gradient(180deg, #14171c 0%, #0b0d10 100%)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, padding: "20px 22px 22px", marginBottom: 20, boxShadow: "0 16px 36px -18px rgba(0,0,0,0.85)" },
+  card: { position: "relative", background: "linear-gradient(135deg, rgba(59,160,255,0.10) 0%, rgba(20,19,17,0.40) 55%)", backdropFilter: "blur(12px) saturate(140%)", WebkitBackdropFilter: "blur(12px) saturate(140%)", border: "1px solid rgba(212,167,44,0.16)", borderRadius: 12, padding: "20px 22px 22px", marginBottom: 20 },
   corner: { position: "absolute", width: 14, height: 14, pointerEvents: "none" },
   head: { display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, marginBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.08)", direction: "ltr" },
   headLeft: { display: "flex", alignItems: "center", gap: 10 },
