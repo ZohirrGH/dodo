@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
   Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt,
+  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles,
 } from "lucide-react";
 
 
@@ -348,6 +349,123 @@ textarea:focus-visible,
   .gx-uni-card { height: 310px; }
 }
 
+/* ---- Rules room: sealed chapters that open on click ---- */
+@keyframes gxRlIn { from { opacity: 0; transform: translateY(12px); filter: blur(5px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes gxRlShine { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
+@keyframes gxRlSweep { from { transform: translateX(-130%) skewX(-18deg); } to { transform: translateX(380%) skewX(-18deg); } }
+@keyframes gxRlPeek { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+
+.gx-rl { padding: 24px 28px 70px; max-width: 1120px; width: 100%; margin: 0 auto; direction: ltr; text-align: left; }
+.gx-rl-hero { text-align: center; margin: 8px 0 34px; }
+.gx-rl-kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 4px; text-transform: uppercase;
+  color: #F4C744; border: 1px solid rgba(212,167,44,0.35); background: rgba(212,167,44,0.08); padding: 6px 14px; border-radius: 999px; }
+.gx-rl-h1 { font-family: 'Oswald', sans-serif; font-weight: 700; font-size: clamp(38px, 7vw, 68px); letter-spacing: 10px; text-transform: uppercase;
+  margin: 16px 0 8px; line-height: 1; padding-left: 10px;
+  background: linear-gradient(100deg, #8a6a12 0%, #F4C744 25%, #fff3c4 50%, #F4C744 75%, #8a6a12 100%); background-size: 200% auto;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: gxRlShine 6s linear infinite; }
+.gx-rl-lede { color: #B9B3A2; font-size: 14px; max-width: 520px; margin: 0 auto; line-height: 1.6; }
+.gx-rl-add { margin-top: 20px; display: flex; justify-content: center; }
+.gx-rl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+
+.gx-rl-card { --ac: #F4C744; position: relative; border-radius: 24px; overflow: hidden; scroll-margin-top: 90px;
+  background: linear-gradient(150deg, rgba(30,28,24,0.78), rgba(10,10,10,0.68));
+  backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid rgba(255,255,255,0.09); box-shadow: 0 18px 40px -22px rgba(0,0,0,0.8);
+  transition: transform .35s cubic-bezier(.22,.8,.25,1), border-color .35s, box-shadow .35s; animation: gxFadeUp .5s ease both; }
+.gx-rl-card::before { content: ""; position: absolute; inset: -1px; pointer-events: none; opacity: .55; transition: opacity .4s;
+  background: radial-gradient(420px 220px at 100% 0%, color-mix(in srgb, var(--ac) 30%, transparent), transparent 70%); }
+.gx-rl-card::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 28%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.09), transparent); transform: translateX(-130%) skewX(-18deg); }
+.gx-rl-card:hover { transform: translateY(-6px); border-color: color-mix(in srgb, var(--ac) 60%, transparent);
+  box-shadow: 0 26px 50px -24px color-mix(in srgb, var(--ac) 55%, black), 0 0 0 1px color-mix(in srgb, var(--ac) 25%, transparent); }
+.gx-rl-card:hover::before { opacity: 1; }
+.gx-rl-card:hover::after { animation: gxRlSweep 1.1s ease; }
+.gx-rl-card.open { grid-column: 1 / -1; transform: none; border-color: color-mix(in srgb, var(--ac) 70%, transparent);
+  box-shadow: 0 30px 70px -30px color-mix(in srgb, var(--ac) 60%, black), 0 0 0 1px color-mix(in srgb, var(--ac) 30%, transparent); }
+.gx-rl-card.open::before { opacity: 1; }
+
+.gx-rl-top { position: relative; z-index: 1; display: block; width: 100%; padding: 24px 24px 20px; cursor: pointer; outline: none; }
+.gx-rl-top:focus-visible { box-shadow: inset 0 0 0 2px var(--ac); border-radius: 24px; }
+.gx-rl-num { position: absolute; top: 6px; right: 18px; font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 92px; line-height: 1;
+  color: color-mix(in srgb, var(--ac) 16%, transparent); pointer-events: none; user-select: none; }
+.gx-rl-icon { width: 54px; height: 54px; border-radius: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #0b0a08;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--ac) 75%, white), var(--ac));
+  box-shadow: 0 10px 26px -8px var(--ac), inset 0 1px 0 rgba(255,255,255,0.5); }
+.gx-rl-title { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 21px; letter-spacing: 2.5px; text-transform: uppercase; color: #fff; margin-top: 18px; }
+.gx-rl-sub { font-size: 13px; color: #a9a392; margin-top: 4px; min-height: 18px; }
+.gx-rl-peek { margin-top: 16px; }
+.gx-rl-peek span { display: block; height: 9px; border-radius: 6px; margin-top: 8px; filter: blur(2.5px); animation: gxRlPeek 2.6s ease-in-out infinite;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ac) 55%, transparent), rgba(255,255,255,0.1)); }
+.gx-rl-peek span:nth-child(1) { width: 92%; }
+.gx-rl-peek span:nth-child(2) { width: 74%; animation-delay: .4s; }
+.gx-rl-peek span:nth-child(3) { width: 58%; animation-delay: .8s; }
+.gx-rl-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
+.gx-rl-count { font-size: 11px; letter-spacing: 1px; color: var(--ac); background: color-mix(in srgb, var(--ac) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ac) 35%, transparent); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.gx-rl-hint { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #8f897a; transition: color .3s; }
+.gx-rl-card:hover .gx-rl-hint, .gx-rl-card.open .gx-rl-hint { color: var(--ac); }
+
+.gx-rl-card.open .gx-rl-top { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.gx-rl-card.open .gx-rl-tt { flex: 1; min-width: 200px; }
+.gx-rl-card.open .gx-rl-title { margin-top: 0; }
+.gx-rl-card.open .gx-rl-peek { display: none; }
+.gx-rl-card.open .gx-rl-foot { margin-top: 0; gap: 16px; }
+.gx-rl-card.open .gx-rl-num { font-size: 120px; top: -6px; }
+
+.gx-rl-panel { position: relative; z-index: 1; padding: 0 24px 26px; animation: gxFadeIn .4s ease both; }
+.gx-rl-panel::before { content: ""; display: block; height: 1px; margin-bottom: 18px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ac) 60%, transparent), transparent); }
+.gx-rl-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+
+.gx-rl-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px 14px; }
+.gx-rl-rows > * { animation: gxRlIn .5s cubic-bezier(.22,.8,.25,1) both; }
+.gx-rl-h { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin-top: 14px; font-family: 'Oswald', sans-serif;
+  font-size: 14px; letter-spacing: 3px; text-transform: uppercase; color: var(--ac); }
+.gx-rl-h:first-child { margin-top: 0; }
+.gx-rl-h::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, color-mix(in srgb, var(--ac) 55%, transparent), transparent); }
+.gx-rl-h b { min-width: 28px; height: 28px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; font-size: 13px; letter-spacing: 0;
+  background: color-mix(in srgb, var(--ac) 18%, transparent); border: 1px solid color-mix(in srgb, var(--ac) 45%, transparent); }
+.gx-rl-note { grid-column: 1 / -1; display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 14px; font-size: 14px; line-height: 1.55; color: #f1ecde;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--ac) 20%, transparent), rgba(255,255,255,0.03)); border: 1px solid color-mix(in srgb, var(--ac) 40%, transparent); }
+.gx-rl-note svg { color: var(--ac); flex-shrink: 0; margin-top: 2px; }
+.gx-rl-p { grid-column: 1 / -1; color: #cfc9b8; line-height: 1.6; font-size: 14px; }
+.gx-rl-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 12px 14px; border-radius: 14px; font-size: 14px; color: #ece7d8;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-left: 3px solid var(--ac); transition: background .2s, transform .2s; }
+.gx-rl-row:hover { background: rgba(255,255,255,0.08); transform: translateX(3px); }
+.gx-rl-row.code { justify-content: flex-start; gap: 14px; }
+.gx-rl-detail { flex-basis: 100%; font-size: 12px; color: #9a9486; }
+.gx-rl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gx-rl-chip { font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 999px; white-space: nowrap; color: var(--ac);
+  background: color-mix(in srgb, var(--ac) 14%, transparent); border: 1px solid color-mix(in srgb, var(--ac) 38%, transparent); }
+.gx-rl-chip.money { color: #F4C744; background: rgba(244,199,68,0.12); border-color: rgba(244,199,68,0.4); font-family: 'Oswald', sans-serif; letter-spacing: .5px; }
+.gx-rl-code { min-width: 78px; text-align: center; font-family: Consolas, monospace; font-weight: 700; font-size: 13px; padding: 5px 10px; border-radius: 9px; color: #0b0a08; background: var(--ac); }
+.gx-rl-bullet { grid-column: 1 / -1; display: flex; gap: 12px; align-items: flex-start; color: #e4dfd0; line-height: 1.55; font-size: 14px; padding: 2px 4px; }
+.gx-rl-bullet i { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; flex-shrink: 0; background: var(--ac); box-shadow: 0 0 10px var(--ac); }
+.gx-rl-empty { color: #8A8579; font-size: 13px; padding: 14px 0; }
+
+.gx-rl-form { margin-bottom: 26px; }
+.gx-rl-pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.gx-rl-pick button { width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12); color: #B9B3A2; transition: all .2s; }
+.gx-rl-pick button.on { color: #F4C744; border-color: #F4C744; background: rgba(244,199,68,0.14); }
+.gx-rl-pick button.sw { border-radius: 50%; width: 30px; height: 30px; border-width: 2px; }
+.gx-rl-pick button.sw.on { box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
+.gx-rl-help { font-size: 12px; color: #8A8579; line-height: 1.9; margin-top: 8px; direction: ltr; text-align: left; }
+.gx-rl-help code { font-family: Consolas, monospace; color: #F4C744; background: rgba(212,167,44,0.1); padding: 1px 6px; border-radius: 5px; }
+.gx-rl-prev { margin-top: 14px; padding: 16px; border-radius: 14px; background: rgba(0,0,0,0.25); border: 1px dashed rgba(212,167,44,0.3); --ac: #F4C744; }
+
+@media (max-width: 640px) {
+  .gx-rl { padding: 16px 14px 60px; }
+  .gx-rl-h1 { letter-spacing: 5px; }
+  .gx-rl-rows { grid-template-columns: 1fr; }
+  .gx-rl-num { font-size: 70px; }
+  .gx-rl-panel, .gx-rl-top { padding-left: 16px; padding-right: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gx-rl-h1, .gx-rl-peek span, .gx-rl-rows > *, .gx-rl-card { animation: none !important; }
+  .gx-rl-card:hover::after { animation: none; }
+}
+
 
 `;
 
@@ -378,6 +496,7 @@ const ROOMS = [
   { key: "vacations", label: "Vacations", icon: Plane },
   { key: "weekly", label: "weekly schedule", icon: Clock },
   { key: "uniform", label: "uniform", icon: Shirt },
+  { key: "rules", label: "rules", icon: Scale },
   { key: "activity", label: "activity log", icon: ScrollText },
 ];
 
@@ -418,6 +537,14 @@ const ACTION_GROUPS = [
     { key: "delete_all", label: "Delete anyone's cards" },
     { key: "reorder", label: "Reorder the cards", hint: "Right-click a card to lift it, then click the place where it should go" },
   ] },
+  { room: "rules", label: "Rules", icon: Scale, actions: [
+    { key: "create", label: "Add rule chapters" },
+    { key: "edit_own", label: "Edit their own chapters" },
+    { key: "edit_all", label: "Edit anyone's chapters" },
+    { key: "delete_own", label: "Delete their own chapters" },
+    { key: "delete_all", label: "Delete anyone's chapters" },
+    { key: "reorder", label: "Reorder the chapters", hint: "Use the arrows inside an opened chapter" },
+  ] },
   { room: "vacations", label: "Vacations", icon: Plane, actions: [
     { key: "create", label: "Submit vacation requests" },
     { key: "review", label: "See every request and accept / reject", hint: "Without this, an officer only sees their own requests" },
@@ -441,6 +568,8 @@ function defaultActionsFor(rank) {
     dispatch: records(advanced, chief),
     // Uniform cards: closed for everybody; the Chef Sheriff opens them rank by rank in the permissions room
     uniform: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief, reorder: chief },
+    // Rules chapters: same idea as the uniform cards
+    rules: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief, reorder: chief },
     vacations: { create: write, review: management },
   };
 }
@@ -451,7 +580,7 @@ function defaultPermsFor(rank) {
   return {
     actions: defaultActionsFor(rank),
     rooms: {
-      dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true, uniform: true,
+      dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true, uniform: true, rules: true,
       officers: management, weekly: management, dispatch: writeAdvanced, activity: isChief(rank),
     },
   };
@@ -812,6 +941,7 @@ export default function SheriffApp() {
               {currentView === "weekly" && "Weekly Schedule"}
               {currentView === "dispatch" && "Dispatch"}
               {currentView === "uniform" && "Uniform"}
+              {currentView === "rules" && "Rules"}
               {currentView === "activity" && "Activity Log"}
               {currentView === "permissions" && "Permissions"}
             </div>
@@ -831,6 +961,7 @@ export default function SheriffApp() {
             {currentView === "vacations" && canSeeRoom(profile.rank, "vacations") && <VacationsView me={profile} management={management} showToast={showToast} />}
             {currentView === "weekly" && canSeeRoom(profile.rank, "weekly") && <WeeklyTableView me={profile} onOpenProfile={openProfile} />}
             {currentView === "uniform" && canSeeRoom(profile.rank, "uniform") && <UniformView me={profile} showToast={showToast} />}
+            {currentView === "rules" && canSeeRoom(profile.rank, "rules") && <RulesView me={profile} showToast={showToast} />}
             {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
             {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
           </div>
@@ -2049,6 +2180,292 @@ function UniformView({ me, showToast }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rules room: sealed chapters. Each chapter is closed (blurred teaser) until it is clicked, then its
+// rules appear one after the other. Chapters live in the "rules_sections" table; who can add / edit /
+// delete / reorder them is set per rank in the permissions room (room "rules").
+// A chapter's text is written one entry per line:
+//   ## Heading    > note    - bullet    Left :: a | b (row with chips)    ~ detail line    plain paragraph
+// ---------------------------------------------------------------------------
+const RULE_ICONS = { scale: Scale, gavel: Gavel, receipt: Receipt, radio: RadioTower, siren: Siren, shield: ShieldAlert, book: BookOpen, fingerprint: Fingerprint };
+const RULE_ACCENTS = ["#F4C744", "#FF6B6B", "#38D6E8", "#A78BFA", "#34D399", "#F472B6", "#FB923C", "#60A5FA"];
+const ruleAccent = (c) => (/^#[0-9a-fA-F]{6}$/.test(c || "") ? c : RULE_ACCENTS[0]);
+const RULE_BODY_HELP = "## Heading   ·   > Note   ·   - Bullet   ·   Left text :: chip | chip   ·   ~ Small detail under the line above";
+
+function parseRules(body) {
+  const out = [];
+  String(body || "").split(/\r?\n/).forEach((raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    if (line.startsWith("## ")) out.push({ t: "h", text: line.slice(3).trim() });
+    else if (line.startsWith("> ")) out.push({ t: "note", text: line.slice(2).trim() });
+    else if (line.startsWith("~ ")) {
+      const prev = out[out.length - 1];
+      const text = line.slice(2).trim();
+      if (prev && (prev.t === "row" || prev.t === "bullet")) prev.detail = prev.detail ? `${prev.detail} · ${text}` : text;
+      else out.push({ t: "p", text });
+    } else if (line.startsWith("- ")) out.push({ t: "bullet", text: line.slice(2).trim() });
+    else if (line.includes("::")) {
+      const i = line.indexOf("::");
+      out.push({ t: "row", left: line.slice(0, i).trim(), right: line.slice(i + 2).split("|").map((s) => s.trim()).filter(Boolean) });
+    } else out.push({ t: "p", text: line });
+  });
+  return out;
+}
+
+function RulesBody({ body }) {
+  const nodes = useMemo(() => parseRules(body), [body]);
+  if (nodes.length === 0) return <div className="gx-rl-empty">Nothing is written in this chapter yet.</div>;
+  return (
+    <div className="gx-rl-rows">
+      {nodes.map((n, i) => {
+        const st = { animationDelay: `${Math.min(i, 26) * 30}ms` };
+        if (n.t === "h") {
+          const m = n.text.match(/^(\d+)\.\s+(.*)$/);
+          return <div key={i} className="gx-rl-h" style={st}>{m && <b>{m[1]}</b>}<span>{m ? m[2] : n.text}</span></div>;
+        }
+        if (n.t === "note") return <div key={i} className="gx-rl-note" style={st}><Sparkles size={17} /><span>{n.text}</span></div>;
+        if (n.t === "p") return <div key={i} className="gx-rl-p" style={st}>{n.text}</div>;
+        if (n.t === "bullet") {
+          return (
+            <div key={i} className="gx-rl-bullet" style={st}>
+              <i />
+              <span>{n.text}{n.detail && <span style={{ display: "block", fontSize: 12, color: "#9a9486", marginTop: 2 }}>{n.detail}</span>}</span>
+            </div>
+          );
+        }
+        const isCode = /^(10-\d+|code\s*\d+)$/i.test(n.left);
+        if (isCode) {
+          return (
+            <div key={i} className="gx-rl-row code" style={st}>
+              <span className="gx-rl-code">{n.left}</span>
+              <span>{n.right.join(" · ")}</span>
+            </div>
+          );
+        }
+        return (
+          <div key={i} className="gx-rl-row" style={st}>
+            <span style={{ flex: "1 1 160px" }}>{n.left}</span>
+            {n.right.length > 0 && (
+              <span className="gx-rl-chips">
+                {n.right.map((c, k) => <span key={k} className={`gx-rl-chip${c.includes("$") ? " money" : ""}`}>{c}</span>)}
+              </span>
+            )}
+            {n.detail && <span className="gx-rl-detail">{n.detail}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RulesView({ me, showToast }) {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [openId, setOpenId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [title, setTitle] = useState("");
+  const [subtitle, setSubtitle] = useState("");
+  const [icon, setIcon] = useState("scale");
+  const [accent, setAccent] = useState(RULE_ACCENTS[0]);
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const cardRefs = useRef({});
+  const formRef = useRef(null);
+  const focusId = useRef(null);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from("rules_sections").select("*");
+    if (error) { console.error("load rules error:", error); setLoaded(true); return; }
+    const sorted = (data || []).slice().sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9) || new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
+    setItems(sorted);
+    setLoaded(true);
+    if (focusId.current) { setOpenId(focusId.current); focusId.current = null; }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("rules_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "rules_sections" }, () => load())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [load]);
+
+  const toggle = (id) => {
+    const willOpen = openId !== id;
+    setOpenId(willOpen ? id : null);
+    if (willOpen) setTimeout(() => cardRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" }), 140);
+  };
+
+  const resetForm = () => { setTitle(""); setSubtitle(""); setIcon("scale"); setAccent(RULE_ACCENTS[0]); setBody(""); setEditingId(null); };
+  const scrollToForm = () => setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+  const openAdd = () => { resetForm(); setFormOpen(true); scrollToForm(); };
+  const openEdit = (it) => {
+    setEditingId(it.id);
+    setTitle(it.title || "");
+    setSubtitle(it.subtitle || "");
+    setIcon(RULE_ICONS[it.icon] ? it.icon : "scale");
+    setAccent(ruleAccent(it.accent));
+    setBody(it.body || "");
+    setFormOpen(true);
+    scrollToForm();
+  };
+  const closeForm = () => { resetForm(); setFormOpen(false); };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) { showToast("error", "Please write the chapter title"); return; }
+    setBusy(true);
+    const payload = { title: title.trim(), subtitle: subtitle.trim(), icon, accent, body };
+    let error;
+    if (editingId) {
+      ({ error } = await supabase.from("rules_sections").update(payload).eq("id", editingId));
+      focusId.current = editingId;
+    } else {
+      const nextOrder = items.reduce((m, x) => Math.max(m, x.sort_order || 0), 0) + 1;
+      const res = await supabase.from("rules_sections").insert({ ...payload, sort_order: nextOrder, created_by: me.id }).select("id").single();
+      error = res.error;
+      focusId.current = res.data?.id || null;
+    }
+    setBusy(false);
+    if (error) { focusId.current = null; showToast("error", editingId ? "Failed to update the chapter" : "Failed to add the chapter"); return; }
+    showToast("success", editingId ? "Chapter updated" : "Chapter added");
+    closeForm();
+    load();
+  };
+
+  const deleteItem = async (it) => {
+    if (!window.confirm(`Delete the chapter "${it.title}"?`)) return;
+    const { error } = await supabase.from("rules_sections").delete().eq("id", it.id);
+    if (error) { showToast("error", "Failed to delete the chapter"); return; }
+    if (openId === it.id) setOpenId(null);
+    showToast("success", "Chapter deleted");
+    load();
+  };
+
+  const move = async (index, dir) => {
+    const to = index + dir;
+    if (to < 0 || to >= items.length) return;
+    const next = items.slice();
+    [next[index], next[to]] = [next[to], next[index]];
+    setItems(next.map((x, i) => ({ ...x, sort_order: i + 1 })));   // show it at once, the server confirms below
+    const { error } = await supabase.rpc("reorder_rules", { p_ids: next.map((x) => x.id) });
+    if (error) { showToast("error", "Could not save the new order"); load(); return; }
+    setTimeout(() => cardRefs.current[next[to].id]?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+  };
+
+  const canCreate = can(me.rank, "rules", "create");
+  const canReorder = can(me.rank, "rules", "reorder") && items.length > 1;
+  const previewAccent = ruleAccent(accent);
+
+  return (
+    <div className="gx-rl">
+      <div className="gx-rl-hero">
+        <span className="gx-rl-kicker"><Sparkles size={13} /> Sheriff Department</span>
+        <h2 className="gx-rl-h1">The Rules</h2>
+        <p className="gx-rl-lede">Every chapter is sealed. Tap one to unseal it and read what is inside.</p>
+        {canCreate && !formOpen && (
+          <div className="gx-rl-add">
+            <button type="button" className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={openAdd}><Plus size={15} /> Add chapter</button>
+          </div>
+        )}
+      </div>
+
+      {formOpen && (
+        <div ref={formRef} className="gx-glass-card gx-rl-form" style={styles.sectionCard}>
+          <div style={styles.sectionHeader}>{editingId ? "Edit Chapter" : "Add Chapter"}</div>
+          <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 4, direction: "ltr", textAlign: "left" }}>
+            <label style={styles.label}>Title</label>
+            <input style={styles.input} placeholder="Miranda Rights" maxLength={60} value={title} onChange={(e) => setTitle(e.target.value)} />
+            <label style={styles.label}>Short line under the title</label>
+            <input style={styles.input} placeholder="The words every arrest begins with" maxLength={90} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
+            <label style={styles.label}>Icon</label>
+            <div className="gx-rl-pick">
+              {Object.entries(RULE_ICONS).map(([k, Ic]) => (
+                <button key={k} type="button" title={k} className={icon === k ? "on" : ""} onClick={() => setIcon(k)}><Ic size={18} /></button>
+              ))}
+            </div>
+            <label style={styles.label}>Color</label>
+            <div className="gx-rl-pick">
+              {RULE_ACCENTS.map((c) => (
+                <button key={c} type="button" title={c} className={`sw${accent === c ? " on" : ""}`} style={{ background: c, borderColor: c }} onClick={() => setAccent(c)} />
+              ))}
+            </div>
+            <label style={styles.label}>Rules (one entry per line)</label>
+            <textarea
+              style={{ ...styles.input, minHeight: 280, resize: "vertical", fontFamily: "Consolas, monospace", lineHeight: 1.6, direction: "ltr", textAlign: "left" }}
+              placeholder={"- You have the right to remain silent.\n> Do you understand your rights?"}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+            />
+            <div className="gx-rl-help">{RULE_BODY_HELP}</div>
+            {body.trim() && (
+              <div className="gx-rl-prev" style={{ "--ac": previewAccent }}>
+                <RulesBody body={body} />
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button className="gx-btn gx-btn-gold" style={styles.btnGold} disabled={busy}>{busy ? "..." : editingId ? "Save Changes" : "Add"}</button>
+              <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={closeForm}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {loaded && items.length === 0 && <div style={styles.emptyState}>No rules yet</div>}
+
+      <div className="gx-rl-grid">
+        {items.map((it, i) => {
+          const open = openId === it.id;
+          const Icon = RULE_ICONS[it.icon] || Scale;
+          const count = parseRules(it.body).filter((x) => x.t !== "h").length;
+          const canEdit = canEditItem(me, "rules", it.created_by);
+          const canDelete = canDeleteItem(me, "rules", it.created_by);
+          return (
+            <div key={it.id} ref={(el) => { cardRefs.current[it.id] = el; }} className={`gx-rl-card${open ? " open" : ""}`} style={{ "--ac": ruleAccent(it.accent), animationDelay: `${i * 70}ms` }}>
+              <div
+                className="gx-rl-top"
+                role="button"
+                tabIndex={0}
+                aria-expanded={open}
+                onClick={() => toggle(it.id)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(it.id); } }}
+              >
+                <span className="gx-rl-num">{String(i + 1).padStart(2, "0")}</span>
+                <div className="gx-rl-icon"><Icon size={25} strokeWidth={1.8} /></div>
+                <div className="gx-rl-tt">
+                  <div className="gx-rl-title">{it.title}</div>
+                  <div className="gx-rl-sub">{it.subtitle}</div>
+                </div>
+                <div className="gx-rl-peek" aria-hidden="true"><span /><span /><span /></div>
+                <div className="gx-rl-foot">
+                  <span className="gx-rl-count">{count} {count === 1 ? "entry" : "entries"}</span>
+                  <span className="gx-rl-hint">{open ? <><Unlock size={14} /> Unsealed — tap to close</> : <><Lock size={14} /> Tap to reveal</>}</span>
+                </div>
+              </div>
+              {open && (
+                <div className="gx-rl-panel">
+                  {(canEdit || canDelete || canReorder) && (
+                    <div className="gx-rl-bar">
+                      {canEdit && <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => openEdit(it)}>✎ Edit</button>}
+                      {canReorder && i > 0 && <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => move(i, -1)}>↑ Move up</button>}
+                      {canReorder && i < items.length - 1 && <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => move(i, 1)}>↓ Move down</button>}
+                      {canDelete && <button type="button" className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, color: "#E0776A" }} onClick={() => deleteItem(it)}>✕ Delete</button>}
+                    </div>
+                  )}
+                  <RulesBody body={it.body} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
