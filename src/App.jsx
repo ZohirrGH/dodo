@@ -773,6 +773,8 @@ export default function SheriffApp() {
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState(null);
   const [authError, setAuthError] = useState(null);
+  // Set when Discord returned to THIS browser but the login was started in another one (see startDiscordLogin)
+  const [relayDone, setRelayDone] = useState(null);
   // True while we are coming back from Discord (?code=...) and exchanging it for a session
   const [exchanging, setExchanging] = useState(() => {
     try {
@@ -839,7 +841,7 @@ export default function SheriffApp() {
         // prompt=none fails for members who never approved the app: retry with the normal Discord screen
         if (["consent_required", "interaction_required", "login_required"].includes(oauthError)) {
           try { localStorage.removeItem("gx_discord_ok"); } catch { /* ignore */ }
-          startDiscordLogin();
+          startDiscordLogin({ forceWeb: true });
           return;
         }
         setAuthError(GATE_MESSAGES.denied);
@@ -853,7 +855,22 @@ export default function SheriffApp() {
         sessionStorage.removeItem("gx_oauth_state");
       } catch { /* ignore */ }
       if (!expected || expected !== state) {
-        setAuthError(GATE_MESSAGES.state_mismatch);
+        if (!state) {
+          setAuthError(GATE_MESSAGES.state_mismatch);
+          setExchanging(false);
+          return;
+        }
+        // The Discord app sent us to a different browser than the one where the login was started.
+        // Hand the result to the tab that is waiting for it (it knows this state); this browser does not sign in.
+        const { error: relayErr } = await supabase.functions.invoke("discord-auth", {
+          body: { action: "relay_store", code, state, redirectUri: oauthRedirectUri() },
+        });
+        if (relayErr) {
+          setAuthError("Sign-in failed. Please try again.");
+          setExchanging(false);
+          return;
+        }
+        setRelayDone({ state });
         setExchanging(false);
         return;
       }
@@ -904,6 +921,25 @@ export default function SheriffApp() {
     setView("dashboard");
     setViewedProfileId(null);
   };
+
+  // "Sign in here instead": take the finished login for this state in this browser (returns an error text or null)
+  const claimHere = async () => {
+    const { data, error } = await supabase.functions.invoke("discord-auth", {
+      body: { action: "relay_poll", state: relayDone?.state },
+    });
+    if (error) {
+      const info = await readFnError(error);
+      return GATE_MESSAGES[info?.error] || info?.message || "Could not sign in. Please try again.";
+    }
+    if (!data?.token_hash) return "Not available: the first tab already signed in, or the login expired. Try again.";
+    const { error: otpErr } = await supabase.auth.verifyOtp({ token_hash: data.token_hash, type: "magiclink" });
+    if (otpErr) return "Sign-in failed. Please try again.";
+    try { localStorage.setItem("gx_discord_ok", "1"); } catch { /* ignore */ }
+    setRelayDone(null);
+    return null;
+  };
+
+  if (relayDone) return <RelayDone onClaim={claimHere} />;
 
   if ((loading && (session || !exchanging)) || (session && !profile && profileFor !== userId) || (session && profile && permsFor !== userId)) {
     return (
@@ -1169,7 +1205,15 @@ function DiscordIcon({ size = 18 }) {
 const DISCORD_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID;
 const oauthRedirectUri = () => window.location.origin + window.location.pathname;
 
-function startDiscordLogin() {
+// On a computer the Discord desktop app is tried first (discord:// shows the Authorize screen inside the app).
+// The app then sends the person back to their DEFAULT browser, which may be a different one than the browser
+// where they clicked "Login". So this tab stays open and waits: whichever browser Discord returns to hands the
+// result over through the discord-auth function (relay_store), and this tab collects it (relay_poll).
+// If the app does not take focus within 4 seconds (not installed / blocked), it falls back to the normal
+// browser page, which signs in on this same tab.
+//   onWaiting(): the app was opened and we are waiting     onError(message): the login failed or timed out
+//   forceWeb: skip the app and use the browser page
+function startDiscordLogin({ onWaiting, onError, forceWeb = false } = {}) {
   let state = "";
   try {
     state = crypto.randomUUID();
@@ -1183,9 +1227,64 @@ function startDiscordLogin() {
     scope: "identify",
     state,
   });
-  // Members who already approved the app skip Discord's consent screen
-  try { if (localStorage.getItem("gx_discord_ok") === "1") params.set("prompt", "none"); } catch { /* ignore */ }
-  window.location.href = `https://discord.com/oauth2/authorize?${params.toString()}`;
+
+  // Browser version. Members who already approved the app skip Discord's consent screen.
+  const webParams = new URLSearchParams(params);
+  try { if (localStorage.getItem("gx_discord_ok") === "1") webParams.set("prompt", "none"); } catch { /* ignore */ }
+  const webUrl = `https://discord.com/oauth2/authorize?${webParams.toString()}`;
+
+  const isDesktop = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  if (forceWeb || !isDesktop || !state) { window.location.href = webUrl; return; }
+
+  onWaiting?.();
+  waitForDiscordApp(state, webUrl, onError);
+  window.location.href = `discord://-/oauth2/authorize?${params.toString()}`;
+}
+
+function waitForDiscordApp(state, webUrl, onError) {
+  let stopped = false;
+  let appOpened = false;
+  const onLeave = () => { appOpened = true; };
+  const onVisibility = () => { if (document.hidden) appOpened = true; };
+  window.addEventListener("blur", onLeave);
+  document.addEventListener("visibilitychange", onVisibility);
+  const stop = () => {
+    stopped = true;
+    window.removeEventListener("blur", onLeave);
+    document.removeEventListener("visibilitychange", onVisibility);
+    try { sessionStorage.removeItem("gx_oauth_state"); } catch { /* ignore */ }
+  };
+
+  // No sign that the app opened: use the browser page on this tab
+  setTimeout(() => {
+    window.removeEventListener("blur", onLeave);
+    document.removeEventListener("visibilitychange", onVisibility);
+    if (!stopped && !appOpened) { stopped = true; window.location.href = webUrl; }
+  }, 4000);
+
+  (async () => {
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (!stopped && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      if (stopped) return;
+      const { data, error } = await supabase.functions.invoke("discord-auth", { body: { action: "relay_poll", state } });
+      if (error) {
+        const info = await readFnError(error);
+        if (!info) continue;                       // network hiccup: keep waiting
+        stop();
+        onError?.(GATE_MESSAGES[info.error] || info.message || "Sign-in failed. Please try again.");
+        return;
+      }
+      if (data?.token_hash) {
+        stop();
+        const { error: otpErr } = await supabase.auth.verifyOtp({ token_hash: data.token_hash, type: "magiclink" });
+        if (otpErr) { onError?.("Sign-in failed. Please try again."); return; }
+        try { localStorage.setItem("gx_discord_ok", "1"); } catch { /* ignore */ }
+        return;                                    // the session event takes over from here
+      }
+    }
+    if (!stopped) { stop(); onError?.("Login timed out. Please try again."); }
+  })();
 }
 
 async function readFnError(error) {
@@ -1204,8 +1303,18 @@ const GATE_MESSAGES = {
 // No login form any more: people are sent straight to Discord.
 // This screen only shows while we wait for Discord, after a sign-out, or when access is refused.
 function DiscordGate({ busy, error, autoStart }) {
-  useEffect(() => { if (autoStart) startDiscordLogin(); }, [autoStart]);
-  const waiting = busy || autoStart;
+  const [appWait, setAppWait] = useState(false);       // the Discord app was opened, waiting for the approval
+  const [localError, setLocalError] = useState(null);  // login failed / timed out while waiting
+  const begin = useCallback(() => {
+    setLocalError(null);
+    startDiscordLogin({
+      onWaiting: () => setAppWait(true),
+      onError: (msg) => { setAppWait(false); setLocalError(msg); },
+    });
+  }, []);
+  useEffect(() => { if (autoStart) begin(); }, [autoStart, begin]);
+  const shownError = localError || error;
+  const waiting = !localError && (busy || autoStart || appWait);
   return (
     <div style={styles.loginPage}>
       <style>{FONTS}</style>
@@ -1214,15 +1323,50 @@ function DiscordGate({ busy, error, autoStart }) {
         <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
         <div style={styles.loginTitle}>SHERIFF DEPARTMENT</div>
         {waiting ? (
-          <div style={styles.loginSub}>Signing you in with Discord...</div>
+          <>
+            <div style={styles.loginSub}>
+              {appWait ? "Approve the login in the Discord app, then come back to this tab. It signs you in by itself." : "Signing you in with Discord..."}
+            </div>
+            {appWait && (
+              <button className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", marginTop: 16 }} onClick={() => startDiscordLogin({ forceWeb: true })}>
+                Use the browser instead
+              </button>
+            )}
+          </>
         ) : (
           <>
-            {error && <div style={{ color: "#E0776A", fontSize: 13, margin: "10px 0", textAlign: "center" }}>{error}</div>}
-            <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, width: "100%", justifyContent: "center", marginTop: 16, gap: 8 }} onClick={startDiscordLogin}>
+            {shownError && <div style={{ color: "#E0776A", fontSize: 13, margin: "10px 0", textAlign: "center" }}>{shownError}</div>}
+            <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, width: "100%", justifyContent: "center", marginTop: 16, gap: 8 }} onClick={begin}>
               <DiscordIcon size={17} /> Login with Discord
             </button>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Shown in a browser that Discord returned to while the login was started in another one.
+// The login result is already handed over to the first tab, which signs in by itself.
+function RelayDone({ onClaim }) {
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div style={styles.loginPage}>
+      <style>{FONTS}</style>
+      <div style={styles.loginGrid} />
+      <div className="gx-glass-card gx-fade-up" style={styles.loginCard}>
+        <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
+        <div style={styles.loginTitle}>SHERIFF DEPARTMENT</div>
+        <div style={styles.loginSub}>Discord login finished. Go back to the first tab where you started: it signs you in by itself. You can close this tab.</div>
+        {msg && <div style={{ color: "#E0776A", fontSize: 13, margin: "10px 0", textAlign: "center" }}>{msg}</div>}
+        <button
+          className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", marginTop: 16 }}
+          disabled={busy}
+          onClick={async () => { setBusy(true); setMsg(await onClaim()); setBusy(false); }}
+        >
+          {busy ? "..." : "Sign in here instead"}
+        </button>
       </div>
     </div>
   );

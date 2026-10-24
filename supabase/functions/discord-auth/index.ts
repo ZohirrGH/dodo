@@ -1,8 +1,10 @@
 // discord-auth: sign people in with Discord and take their name + rank from the Discord server.
 //
-// Two actions (POST JSON):
+// Actions (POST JSON):
 //   { action: "login", code, redirectUri }  -> { ok, token_hash }   (the site then calls supabase.auth.verifyOtp)
 //   { action: "sync" }  + user session      -> { ok, rank }         (re-checks roles of someone already signed in)
+//   { action: "relay_store", code, redirectUri, state } -> { ok }   (finishes a login for the tab that is waiting)
+//   { action: "relay_poll", state }         -> { ok, pending } | { ok, token_hash }   (that waiting tab asks for the result)
 //
 // Errors are JSON: { error: "<code>", message: "<text>" }
 // codes: not_in_server | no_role | badge_conflict | bad_code | unauthorized | bad_request | server_error
@@ -60,6 +62,8 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body?.action === "login") return json(await handleLogin(body));
     if (body?.action === "sync") return json(await handleSync(req));
+    if (body?.action === "relay_store") return json(await handleRelayStore(body));
+    if (body?.action === "relay_poll") return json(await handleRelayPoll(body));
     throw new Fail("bad_request", "Unknown action", 400);
   } catch (e) {
     if (e instanceof Fail) return json({ error: e.code, message: e.message }, e.status);
@@ -243,6 +247,59 @@ async function handleLogin(body: { code?: string; redirectUri?: string }) {
   if (linkErr || !link?.properties?.hashed_token) throw linkErr ?? new Error("generateLink failed");
 
   return { ok: true, token_hash: link.properties.hashed_token };
+}
+
+// ---------------------------------------------------------------- login relay
+// The Discord desktop app sends the person back to their DEFAULT browser, which may not be the one where
+// they clicked "Login". The tab that started the login keeps waiting and asks for the result with its secret
+// state (relay_poll); whichever browser Discord returns to hands the code over (relay_store).
+// The one-time token is only ever returned to a caller that knows the state, and is deleted when read.
+
+const RELAY_TTL_MS = 10 * 60 * 1000;
+
+async function sha256Hex(text: string) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function requireState(state: unknown): string {
+  if (typeof state !== "string" || state.length < 16 || state.length > 128) {
+    throw new Fail("bad_request", "Missing state", 400);
+  }
+  return state;
+}
+
+async function handleRelayStore(body: { code?: string; redirectUri?: string; state?: string }) {
+  const key = await sha256Hex(requireState(body.state));
+  await admin.from("login_relay").delete().lt("created_at", new Date(Date.now() - RELAY_TTL_MS).toISOString());
+
+  let payload: Record<string, unknown>;
+  try {
+    const result = await handleLogin(body);
+    payload = { ok: true, token_hash: result.token_hash };
+  } catch (e) {
+    if (e instanceof Fail) {
+      payload = { error: e.code, message: e.message };
+    } else {
+      console.error("discord-auth relay_store error:", e);
+      payload = { error: "server_error", message: "Unexpected server error" };
+    }
+  }
+
+  const { error } = await admin.from("login_relay").insert({ key_hash: key, payload });
+  if (error && (error as { code?: string }).code !== "23505") throw error;   // 23505: same redirect reloaded, keep the first result
+  return { ok: true };
+}
+
+async function handleRelayPoll(body: { state?: string }) {
+  const key = await sha256Hex(requireState(body.state));
+  const { data, error } = await admin.from("login_relay").delete().eq("key_hash", key).select("payload").maybeSingle();
+  if (error) throw error;
+  if (!data) return { ok: true, pending: true };
+
+  const payload = data.payload as { token_hash?: string; error?: string; message?: string };
+  if (payload.token_hash) return { ok: true, token_hash: payload.token_hash };
+  throw new Fail(payload.error ?? "server_error", payload.message ?? "Sign-in failed, try again", 400);
 }
 
 async function handleSync(req: Request) {
