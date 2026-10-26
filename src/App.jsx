@@ -3,7 +3,7 @@ import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
   Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt,
-  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles, Eye, FileText, Play, Square,
+  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles, Eye, FileText, Play, Square, UserCheck,
 } from "lucide-react";
 
 
@@ -629,6 +629,7 @@ const ROOMS = [
   { key: "rules", label: "rules", icon: Scale },
   { key: "cv", label: "CV Sheriff", icon: FileText },
   { key: "activity", label: "activity log", icon: ScrollText },
+  { key: "presence", label: "presence", icon: UserCheck },
 ];
 
 // What a rank can do inside each room. "their own" = records the person created (or their own logs),
@@ -743,7 +744,7 @@ function defaultPermsFor(rank) {
     actions: defaultActionsFor(rank),
     rooms: {
       dashboard: true, leaderboard: true, operations: true, wanted: true, tests: true, vacations: true, uniform: true, rules: true, cv: false,
-      officers: management, weekly: management, dispatch: writeAdvanced, activity: isChief(rank),
+      officers: management, weekly: management, dispatch: writeAdvanced, activity: isChief(rank), presence: management,
     },
   };
 }
@@ -1058,6 +1059,21 @@ export default function SheriffApp() {
     };
   }, [userId, loadProfile]);
 
+  // Presence: while the site is open, tell the server every 30 s that this officer is here (feeds the Presence room).
+  // Purely informational: any error (for example the database function is not installed yet) is ignored on purpose.
+  useEffect(() => {
+    if (!userId) return undefined;
+    const ping = () => { Promise.resolve(supabase.rpc("presence_ping")).catch(() => { /* ignore */ }); };
+    ping();
+    const timer = setInterval(ping, 30000);
+    const onVisible = () => { if (!document.hidden) ping(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [userId]);
+
   const logout = async () => {
     try { sessionStorage.setItem("gx_manual_login", "1"); } catch { /* ignore */ }
     await supabase.auth.signOut();
@@ -1190,6 +1206,7 @@ export default function SheriffApp() {
               {currentView === "rules" && "Rules"}
               {currentView === "cv" && "CV Sheriff"}
               {currentView === "activity" && "Activity Log"}
+              {currentView === "presence" && "Presence"}
               {currentView === "permissions" && "Permissions"}
             </div>
           </div>
@@ -1211,6 +1228,7 @@ export default function SheriffApp() {
             {currentView === "rules" && canSeeRoom(profile.rank, "rules") && <RulesView me={profile} showToast={showToast} />}
             {currentView === "cv" && canSeeRoom(profile.rank, "cv") && <CvView me={profile} showToast={showToast} />}
             {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
+            {currentView === "presence" && canSeeRoom(profile.rank, "presence") && <PresenceView me={profile} onOpenProfile={openProfile} />}
             {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
           </div>
 
@@ -2144,6 +2162,88 @@ function ActivityLogView({ onOpenProfile }) {
 }
 
 
+// Presence room: who signed in today, how long they have been on the site, and who is online right now.
+function fmtDuration(seconds) {
+  const m = Math.floor(Math.max(0, seconds) / 60);
+  if (m < 1) return "< 1 min";
+  const h = Math.floor(m / 60);
+  return h > 0 ? `${h} h ${m % 60} min` : `${m} min`;
+}
+const fmtTimeOfDay = (ts) => new Date(ts).toLocaleTimeString("ar-DZ", { hour: "2-digit", minute: "2-digit" });
+
+function PresenceView({ me, onOpenProfile }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const linkable = canSeeRoom(me.rank, "officers");   // opening someone's profile needs the officers room
+
+  const load = useCallback(async () => {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const { data, error } = await supabase.rpc("presence_today", { p_since: midnight.toISOString() });
+    if (error) { setFailed(true); setLoading(false); return; }
+    setFailed(false);
+    setRows(data || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 20000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const onlineCount = rows.filter((r) => r.online).length;
+
+  return (
+    <div style={styles.content}>
+      <div style={{ ...styles.statsRow, gridTemplateColumns: "repeat(2, 1fr)" }}>
+        <StatCard icon={UserCheck} label="Online now" value={onlineCount} accent />
+        <StatCard icon={Users} label="Signed in today" value={rows.length} />
+      </div>
+      <div className="gx-glass-card" style={styles.sectionCard}>
+        <div style={styles.sectionHeader}>Today</div>
+        {loading ? (
+          <div style={styles.emptyState}>Loading...</div>
+        ) : failed ? (
+          <div style={styles.emptyState}>Could not load presence</div>
+        ) : rows.length === 0 ? (
+          <div style={styles.emptyState}>Nobody has signed in today</div>
+        ) : (
+          <div style={styles.rankList}>
+            {rows.map((r) => (
+              <div key={r.officer_id} style={styles.rankRow}>
+                <span
+                  title={r.online ? "Online" : "Offline"}
+                  style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: r.online ? "#4CAF6A" : "#5A5648" }}
+                />
+                <Avatar url={r.avatar_url} name={r.name} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{ ...styles.miniName, ...(linkable ? { cursor: "pointer" } : {}) }}
+                    onClick={() => linkable && onOpenProfile && onOpenProfile(r.officer_id)}
+                  >
+                    {r.name}
+                  </div>
+                  <div style={styles.miniRank}>{r.rank} · #{r.badge}</div>
+                </div>
+                <div style={{ textAlign: "right", fontSize: 12, color: "#B9B3A2", lineHeight: 1.6 }}>
+                  <div>Signed in {fmtTimeOfDay(r.first_login)}</div>
+                  <div>Stayed {fmtDuration(r.seconds)}</div>
+                  <div style={{ color: r.online ? "#4CAF6A" : "#8A8579" }}>
+                    {r.online ? "Online now" : `Last seen ${fmtTimeOfDay(r.last_seen)}`}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function OfficersView({ showToast, onOpenProfile }) {
   const [officers, setOfficers] = useState([]);
   const [vacatingIds, setVacatingIds] = useState(new Set());
@@ -2201,8 +2301,6 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   const [timeIn, setTimeIn] = useState("");
   const [timeOut, setTimeOut] = useState("");
   const [workDate, setWorkDate] = useState(new Date().toISOString().slice(0, 10));
-  const [newRank, setNewRank] = useState("");
-  const [savingRank, setSavingRank] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [logTab, setLogTab] = useState("duty");
@@ -2219,7 +2317,6 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   const load = useCallback(() => {
     supabase.from("profiles").select("*").eq("id", profileId).single().then(({ data }) => {
       setOfficer(data);
-      if (data) setNewRank(data.rank);
     });
     supabase.from("duty_logs").select("*").eq("officer_id", profileId).order("work_date", { ascending: false })
       .then(({ data }) => setLogs(data || []));
@@ -2279,16 +2376,6 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
     if (error) { showToast("error", "Failed to delete"); return; }
     if (editingLogId === id) resetLogForm();
     showToast("success", "Deleted successfully");
-    load();
-  };
-
-  const saveRank = async () => {
-    if (newRank === officer.rank) return;
-    setSavingRank(true);
-    const { error } = await supabase.from("profiles").update({ rank: newRank }).eq("id", officer.id);
-    setSavingRank(false);
-    if (error) { showToast("error", "Failed to change rank"); return; }
-    showToast("success", "Rank changed successfully");
     load();
   };
 
@@ -2363,15 +2450,7 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
       {iAmChief && !isOwn && (
         <div className="gx-glass-card" style={{ ...styles.sectionCard, marginTop: 16, border: "1px solid rgba(212,167,44,0.3)" }}>
           <div style={styles.sectionHeader}>Chief Sheriff Control Panel</div>
-          <label style={styles.label}>Edit Rank</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <select style={styles.input} value={newRank} onChange={(e) => setNewRank(e.target.value)}>
-              {RANKS.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-            <button className="gx-btn gx-btn-gold" style={styles.btnGold} onClick={saveRank} disabled={savingRank || newRank === officer.rank}>
-              {savingRank ? "..." : "Save"}
-            </button>
-          </div>
+          <div style={{ color: "#8A8579", fontSize: 12 }}>Ranks are managed from Discord: change the person's role there and the site follows within seconds.</div>
           <button
             className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, marginTop: 14, borderColor: "rgba(194,75,63,0.4)", color: "#E0776A" }}
             onClick={deleteAccount}
