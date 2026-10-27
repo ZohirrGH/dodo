@@ -3,7 +3,7 @@ import { supabase } from "./supabaseClient";
 import {
   Shield, Star, Clock, Users, Trophy, LogOut, Plus, Search, ChevronRight,
   Medal, X, Radio, Lock, Bell, Plane, ArrowRight, Upload, Image as ImageIcon, Award, ScrollText, Headphones, Download, Shirt,
-  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles, Eye, FileText, Play, Square, UserCheck,
+  Scale, Gavel, Receipt, RadioTower, Siren, ShieldAlert, BookOpen, Fingerprint, Unlock, Sparkles, Eye, FileText, Play, Square, UserCheck, ChevronLeft, Trash2,
 } from "lucide-react";
 
 
@@ -686,7 +686,8 @@ const ACTION_GROUPS = [
   ] },
   { room: "duty", label: "Duty time logs", icon: Clock, actions: [
     { key: "edit_all", label: "Edit anyone's time logs", hint: "Fix an officer's hours by hand from their profile" },
-    { key: "delete_all", label: "Delete anyone's time logs" },
+    { key: "delete_all", label: "Delete anyone's time logs", hint: "Also removes a shift from the Presence room" },
+    { key: "stop_all", label: "End anyone's running shift", hint: "From the Presence room. The hours so far are saved" },
   ] },
   { room: "vacations", label: "Vacations", icon: Plane, actions: [
     { key: "create", label: "Submit vacation requests" },
@@ -706,7 +707,7 @@ function defaultActionsFor(rank) {
     return {
       operations: none(rec), wanted: none(rec), tests: none(rec), dispatch: none(["create", "edit_own", "delete_own"]),
       uniform: none([...rec, "reorder"]), rules: none([...rec, "reorder"]), leaderboard: none(["manage"]), vacations: none(["create", "review"]),
-      duty: none(["edit_all", "delete_all"]),
+      duty: none(["edit_all", "delete_all", "stop_all"]),
       cv: { create: true, review: false },
     };
   }
@@ -726,7 +727,7 @@ function defaultActionsFor(rank) {
     rules: { create: chief, edit_own: chief, edit_all: chief, delete_own: chief, delete_all: chief, reorder: chief },
     vacations: { create: write, review: management },
     // Duty time logs: only the timer creates them; management can correct anyone's hours
-    duty: { edit_all: management, delete_all: management },
+    duty: { edit_all: management, delete_all: management, stop_all: chief },
     // Leaderboard podium: picked by hand; closed until the Chef Sheriff opens it for the senior ranks he trusts
     leaderboard: { manage: chief },
     // CV Sheriff: officers do not send CVs; reviewing is closed until the Chef Sheriff opens it per rank
@@ -1247,7 +1248,7 @@ export default function SheriffApp() {
             {currentView === "rules" && canSeeRoom(profile.rank, "rules") && <RulesView me={profile} showToast={showToast} />}
             {currentView === "cv" && canSeeRoom(profile.rank, "cv") && <CvView me={profile} showToast={showToast} />}
             {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
-            {currentView === "presence" && canSeeRoom(profile.rank, "presence") && <PresenceView me={profile} onOpenProfile={openProfile} />}
+            {currentView === "presence" && canSeeRoom(profile.rank, "presence") && <PresenceView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
             {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
           </div>
 
@@ -1684,7 +1685,7 @@ function DutyTimer({ profile, onLogged }) {
     if (error || !data) return;
     // the server closed our shift by itself (8 hours reached or 06:00): tell the officer
     if (wasRunning.current && !data.started_at && !stopping.current) {
-      setMsg({ type: "info", text: "Your shift was closed automatically and saved to your time logs." });
+      setMsg({ type: "info", text: "Your shift was closed (automatically or by a supervisor) and saved to your time logs." });
       loggedCb.current && loggedCb.current();
     }
     wasRunning.current = !!data.started_at;
@@ -1955,6 +1956,8 @@ const ACTION_LABELS = {
   rank_change: "Rank Change",
   operation_delete: "Operation Delete",
   account_delete: "Account Delete",
+  shift_stop: "Ended a shift",
+  shift_delete: "Deleted a shift",
 };
 
 const ACTIVITY_PAGE_SIZE = 50;
@@ -2162,11 +2165,13 @@ function ActivityLogView({ onOpenProfile }) {
     { key: "all", label: "All" },
     { key: "delete", label: "Delete" },
     { key: "rank_change", label: "Rank Change" },
+    { key: "shift", label: "Shifts" },
   ];
   const filtered = logs.filter((l) => {
     if (filter === "all") return true;
-    if (filter === "delete") return l.action === "operation_delete" || l.action === "account_delete";
+    if (filter === "delete") return l.action === "operation_delete" || l.action === "account_delete" || l.action === "shift_delete";
     if (filter === "rank_change") return l.action === "rank_change";
+    if (filter === "shift") return l.action === "shift_stop" || l.action === "shift_delete";
     return true;
   });
 
@@ -2227,79 +2232,228 @@ function ActivityLogView({ onOpenProfile }) {
 }
 
 
-// Presence room: who signed in today, how long they have been on the site, and who is online right now.
-function fmtDuration(seconds) {
-  const m = Math.floor(Math.max(0, seconds) / 60);
-  if (m < 1) return "< 1 min";
-  const h = Math.floor(m / 60);
-  return h > 0 ? `${h} h ${m % 60} min` : `${m} min`;
-}
-const fmtTimeOfDay = (ts) => new Date(ts).toLocaleTimeString("ar-DZ", { hour: "2-digit", minute: "2-digit" });
+// Presence room: shift attendance. Who is on shift right now, who worked on a given day and for how long.
+// People with the "stop_all" permission can end a running shift; people with "delete_all" can delete a saved one.
+const fmtTimeOfDay = (ts) => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Algiers" });
+const shiftDay = (iso, delta) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+};
+const PRESENCE_ERRORS = {
+  no_active_shift: "That officer is no longer on shift.",
+  not_found: "That shift was already deleted.",
+  "not allowed": "You are not allowed to do that.",
+};
 
-function PresenceView({ me, onOpenProfile }) {
-  const [rows, setRows] = useState([]);
+function PresenceView({ me, showToast, onOpenProfile }) {
+  const [data, setData] = useState(null);
+  const [day, setDay] = useState(null);          // null = today (decided by the server, Africa/Algiers)
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [offset, setOffset] = useState(0);       // server clock - browser clock
+  const [tick, setTick] = useState(Date.now());
+  const [busy, setBusy] = useState(null);        // officer id or log id being changed
+  const [open, setOpen] = useState(() => new Set());
+  const dayRef = useRef(day);
+  dayRef.current = day;
   const linkable = canSeeRoom(me.rank, "officers");   // opening someone's profile needs the officers room
 
   const load = useCallback(async () => {
-    // "Today" is decided by the database (Africa/Algiers), so everybody sees the same list
-    const { data, error } = await supabase.rpc("presence_today");
-    if (error) { setFailed(true); setLoading(false); return; }
+    const asked = dayRef.current;
+    const { data: d, error } = await supabase.rpc("shift_presence", { p_day: asked });
+    if (asked !== dayRef.current) return;     // the person moved to another day meanwhile
+    if (error || !d) { setFailed(true); setLoading(false); return; }
     setFailed(false);
-    setRows(data || []);
+    setData(d);
+    setOffset(new Date(d.server_now).getTime() - Date.now());
     setLoading(false);
   }, []);
 
   useEffect(() => {
+    setLoading(true);
     load();
-    const timer = setInterval(() => { if (!document.hidden) load(); }, 20000);
-    return () => clearInterval(timer);
+  }, [day, load]);
+
+  useEffect(() => {
+    const poll = setInterval(() => { if (!document.hidden) load(); }, 15000);
+    const clock = setInterval(() => setTick(Date.now()), 1000);
+    return () => { clearInterval(poll); clearInterval(clock); };
   }, [load]);
 
-  const onlineCount = rows.filter((r) => r.online).length;
+  const now = tick + offset;
+  const shownDay = data?.day || day;
+  const isToday = !!data && data.day === data.today;
+  const onShift = data?.on_shift || [];
+  const rows = data?.rows || [];
+  const totalHours = rows.reduce((s, r) => s + Number(r.total_hours || 0), 0);
+
+  const fail = (error) => {
+    const key = Object.keys(PRESENCE_ERRORS).find((k) => (error?.message || "").includes(k));
+    showToast && showToast("error", key ? PRESENCE_ERRORS[key] : "Something went wrong, try again");
+  };
+
+  const endShift = async (o) => {
+    if (busy || !window.confirm(`End the shift of ${o.name}? The hours so far will be saved.`)) return;
+    setBusy(o.id);
+    const { data: res, error } = await supabase.rpc("shift_force_stop", { p_officer: o.id });
+    setBusy(null);
+    if (error) { fail(error); load(); return; }
+    showToast && showToast("success", res?.logged ? `Shift ended: ${fmtHours(Number(res.duration_hours))} saved for ${o.name}` : "Shift ended, it was too short to be saved");
+    load();
+  };
+
+  const deleteLog = async (r, l) => {
+    if (busy || !window.confirm(`Delete this shift of ${r.name} (${l.time_in} → ${l.time_out})?`)) return;
+    setBusy(l.id);
+    const { error } = await supabase.rpc("shift_delete_log", { p_log: l.id });
+    setBusy(null);
+    if (error) { fail(error); load(); return; }
+    showToast && showToast("success", "Shift deleted");
+    load();
+  };
+
+  const toggleOpen = (id) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const elapsedOf = (startedAt) => Math.min(Math.max(0, now - new Date(startedAt).getTime()), DUTY_MAX_MS);
+  const nameBtn = (o) => (
+    <div
+      style={{ ...styles.miniName, ...(linkable ? { cursor: "pointer" } : {}) }}
+      onClick={() => linkable && onOpenProfile && onOpenProfile(o.id)}
+    >
+      {o.name}
+    </div>
+  );
+  const dangerBtn = (disabled) => ({
+    display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(229,72,59,0.12)", color: "#FF6B5E",
+    border: "1px solid rgba(229,72,59,0.45)", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600,
+    cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1, fontFamily: "'Inter', sans-serif", whiteSpace: "nowrap",
+  });
 
   return (
     <div style={styles.content}>
-      <div style={{ ...styles.statsRow, gridTemplateColumns: "repeat(2, 1fr)" }}>
-        <StatCard icon={UserCheck} label="Online now" value={onlineCount} accent />
-        <StatCard icon={Users} label="Signed in today" value={rows.length} />
+      <div style={{ ...styles.statsRow, gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <StatCard icon={UserCheck} label="On shift now" value={onShift.length} accent />
+        <StatCard icon={Users} label={isToday ? "Worked today" : "Worked that day"} value={rows.length} />
+        <StatCard icon={Clock} label="Hours that day" value={fmtHours(totalHours)} />
       </div>
+
+      {/* ---------- on shift right now ---------- */}
       <div className="gx-glass-card" style={styles.sectionCard}>
-        <div style={styles.sectionHeader}>Today</div>
+        <div style={styles.sectionHeader}>On shift now</div>
+        {loading && !data ? (
+          <div style={styles.emptyState}>Loading...</div>
+        ) : failed && !data ? (
+          <div style={styles.emptyState}>Could not load the shifts</div>
+        ) : onShift.length === 0 ? (
+          <div style={styles.emptyState}>Nobody is on shift right now</div>
+        ) : (
+          <div style={styles.rankList}>
+            {onShift.map((o) => (
+              <div key={o.id} style={styles.rankRow}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: "#4CAF6A", boxShadow: "0 0 8px #4CAF6A99" }} />
+                <Avatar url={o.avatar_url} name={o.name} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {nameBtn(o)}
+                  <div style={styles.miniRank}>{o.rank} · #{o.badge}</div>
+                </div>
+                <div style={{ textAlign: "right", fontSize: 12, color: "#B9B3A2", lineHeight: 1.6 }}>
+                  <div>Started {fmtTimeOfDay(o.started_at)}</div>
+                  <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 16, letterSpacing: 1, color: "#F4C744", fontVariantNumeric: "tabular-nums" }}>
+                    {fmtClock(elapsedOf(o.started_at))}
+                  </div>
+                </div>
+                {data?.can_stop && (
+                  <button className="gx-btn" style={dangerBtn(busy === o.id)} disabled={busy === o.id} onClick={() => endShift(o)}>
+                    <Square size={12} fill="currentColor" /> End shift
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ---------- the chosen day ---------- */}
+      <div className="gx-glass-card" style={{ ...styles.sectionCard, marginTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+          <div style={{ ...styles.sectionHeader, marginBottom: 0 }}>
+            {isToday ? "Today" : "Day"} · {shownDay || "..."}
+          </div>
+          <div style={{ display: "flex", gap: 8, direction: "ltr" }}>
+            <button className="gx-btn gx-btn-ghost" style={styles.btnGhost} disabled={!shownDay} onClick={() => shownDay && setDay(shiftDay(shownDay, -1))}>
+              <ChevronLeft size={14} style={{ verticalAlign: "-2px" }} /> Previous
+            </button>
+            <button className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, ...(isToday ? { opacity: 0.45, cursor: "not-allowed" } : {}) }} disabled={isToday || !data} onClick={() => setDay(null)}>
+              Today
+            </button>
+            <button className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, ...(isToday ? { opacity: 0.45, cursor: "not-allowed" } : {}) }} disabled={isToday || !data} onClick={() => setDay(shiftDay(shownDay, 1) >= data.today ? null : shiftDay(shownDay, 1))}>
+              Next <ChevronRight size={14} style={{ verticalAlign: "-2px" }} />
+            </button>
+          </div>
+        </div>
+
         {loading ? (
           <div style={styles.emptyState}>Loading...</div>
         ) : failed ? (
-          <div style={styles.emptyState}>Could not load presence</div>
+          <div style={styles.emptyState}>Could not load the shifts</div>
         ) : rows.length === 0 ? (
-          <div style={styles.emptyState}>Nobody has signed in today</div>
+          <div style={styles.emptyState}>{isToday ? "Nobody has started a shift today" : "Nobody worked on that day"}</div>
         ) : (
           <div style={styles.rankList}>
-            {rows.map((r) => (
-              <div key={r.officer_id} style={styles.rankRow}>
-                <span
-                  title={r.online ? "Online" : "Offline"}
-                  style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: r.online ? "#4CAF6A" : "#5A5648" }}
-                />
-                <Avatar url={r.avatar_url} name={r.name} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{ ...styles.miniName, ...(linkable ? { cursor: "pointer" } : {}) }}
-                    onClick={() => linkable && onOpenProfile && onOpenProfile(r.officer_id)}
-                  >
-                    {r.name}
+            {rows.map((r) => {
+              const expanded = open.has(r.id);
+              const hasLogs = (r.logs || []).length > 0;
+              return (
+                <div key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ ...styles.rankRow, borderBottom: "none" }}>
+                    <span
+                      title={r.running ? "On shift" : "Finished"}
+                      style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: r.running ? "#4CAF6A" : "#5A5648" }}
+                    />
+                    <Avatar url={r.avatar_url} name={r.name} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {nameBtn(r)}
+                      <div style={styles.miniRank}>{r.rank} · #{r.badge}</div>
+                    </div>
+                    <div style={{ textAlign: "right", fontSize: 12, color: "#B9B3A2", lineHeight: 1.6 }}>
+                      <div>{r.shifts} {r.shifts === 1 ? "shift" : "shifts"} · {fmtHours(Number(r.total_hours))}</div>
+                      {r.first_in && <div>First in {r.first_in}</div>}
+                      {r.running && (
+                        <div style={{ color: "#4CAF6A" }}>
+                          On shift now · {fmtClock(elapsedOf(r.started_at))}
+                        </div>
+                      )}
+                    </div>
+                    {hasLogs && (
+                      <button className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, padding: "6px 12px", fontSize: 12 }} onClick={() => toggleOpen(r.id)}>
+                        {expanded ? "Hide" : "Details"}
+                      </button>
+                    )}
                   </div>
-                  <div style={styles.miniRank}>{r.rank} · #{r.badge}</div>
+                  {expanded && hasLogs && (
+                    <div style={{ padding: "0 6px 12px 44px", display: "flex", flexDirection: "column", gap: 6 }}>
+                      {r.logs.map((l) => (
+                        <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.035)", borderRadius: 6 }}>
+                          <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: "#F5F1E6", direction: "ltr", textAlign: "left" }}>
+                            {l.time_in} → {l.time_out} · {fmtHours(Number(l.duration_hours))}
+                            {l.note && <span style={{ color: "#8A8579", marginInlineStart: 8 }}>{l.note}</span>}
+                          </div>
+                          {data?.can_delete && (
+                            <button className="gx-btn" style={dangerBtn(busy === l.id)} disabled={busy === l.id} onClick={() => deleteLog(r, l)}>
+                              <Trash2 size={12} /> Delete
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div style={{ textAlign: "right", fontSize: 12, color: "#B9B3A2", lineHeight: 1.6 }}>
-                  <div>Signed in {fmtTimeOfDay(r.first_login)}</div>
-                  <div>Stayed {fmtDuration(r.seconds)}</div>
-                  <div style={{ color: r.online ? "#4CAF6A" : "#8A8579" }}>
-                    {r.online ? "Online now" : `Last seen ${fmtTimeOfDay(r.last_seen)}`}
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
