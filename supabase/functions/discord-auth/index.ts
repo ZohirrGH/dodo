@@ -5,7 +5,8 @@
 //   { action: "sync" }  + user session      -> { ok, rank }         (re-checks roles of someone already signed in)
 //   { action: "relay_store", code, redirectUri, state } -> { ok }   (finishes a login for the tab that is waiting)
 //   { action: "relay_poll", state }         -> { ok, pending } | { ok, token_hash }   (that waiting tab asks for the result)
-//   { action: "sync_all" }                  -> { ok, checked, changed }   (called by pg_cron every 10 s: refreshes everybody's rank/name)
+//   { action: "sync_all" }                  -> { ok, checked, changed, revoked }   (called by pg_cron every 10 s: refreshes everybody's
+//                                              rank/name and bans whoever left the server or lost every mapped role)
 //
 // Errors are JSON: { error: "<code>", message: "<text>" }
 // codes: not_in_server | no_role | badge_conflict | bad_code | unauthorized | bad_request | server_error
@@ -144,12 +145,60 @@ function describe(member: Member) {
 
 async function updateLinkedProfile(profileId: string, member: Member, rank: string) {
   const info = describe(member);
-  const { data: current } = await admin.from("profiles").select("avatar_url").eq("id", profileId).single();
+  const { data: current } = await admin.from("profiles").select("avatar_url, rank, name").eq("id", profileId).single();
   const patch: Record<string, unknown> = { name: info.name, rank };
   // never overwrite a picture the officer uploaded themselves
   if (!current?.avatar_url && info.avatar) patch.avatar_url = info.avatar;
   const { error } = await admin.from("profiles").update(patch).eq("id", profileId);
   if (error) throw error;
+  await logRankChange(profileId, info.name, current?.rank ?? null, rank);
+}
+
+// Ranks now change only through Discord, so the activity log records those changes here
+// (the database trigger only sees changes made by a signed-in person). A failure here never blocks a sign-in.
+async function logRankChange(profileId: string, name: string | null, from: string | null, to: string) {
+  if (!from || from === to) return;
+  try {
+    const { error } = await admin.from("activity_logs").insert({
+      actor_id: null,
+      actor_name: "Discord",
+      action: "rank_change",
+      target_id: profileId,
+      target_name: name,
+      details: `${from} → ${to}`,
+    });
+    if (error) console.error("rank_change log failed:", error);
+  } catch (e) {
+    console.error("rank_change log failed:", e);
+  }
+}
+
+// ---------------------------------------------------------------- access revocation
+// Somebody who left the Discord server, or lost every mapped role, must not keep a working session.
+// We ban the auth user (new sign-ins and token refreshes stop at once; an access token already issued
+// stays valid until it expires, normally within the hour) and remember it in public.access_revocations so
+// the background sync stops asking Discord about them. Signing in again with a valid role lifts the ban.
+// Everything here is best-effort and silent: if the table from migration 20261026h is missing, nothing happens.
+
+const BAN_FOREVER = "876000h";   // about 100 years; lifted by clearRevocation() on the next successful sign-in
+
+async function revokeAccess(profileId: string, reason: string) {
+  const { error: banErr } = await admin.auth.admin.updateUserById(profileId, { ban_duration: BAN_FOREVER });
+  if (banErr) throw banErr;
+  const { error } = await admin.from("access_revocations").upsert({ profile_id: profileId, reason, revoked_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+async function clearRevocation(profileId: string) {
+  try {
+    const { data, error } = await admin.from("access_revocations").select("profile_id").eq("profile_id", profileId).maybeSingle();
+    if (error || !data) return;   // no table yet, or nothing to clear
+    const { error: unbanErr } = await admin.auth.admin.updateUserById(profileId, { ban_duration: "none" });
+    if (unbanErr) throw unbanErr;
+    await admin.from("access_revocations").delete().eq("profile_id", profileId);
+  } catch (e) {
+    console.error("clearRevocation failed:", e);
+  }
 }
 
 // 1) already linked  2) old account with the same badge and the same rank  3) brand new account
@@ -249,6 +298,9 @@ async function handleLogin(body: { code?: string; redirectUri?: string }) {
   // 3. Find / link / create the account and refresh name + rank
   const userId = await findOrCreateProfile(member, rank);
 
+  // 3b. They have a valid role again: lift the ban if they had been revoked
+  await clearRevocation(userId);
+
   // 4. Hand back a one-time token; the site turns it into a session with supabase.auth.verifyOtp
   const { data: userData, error: userErr } = await admin.auth.admin.getUserById(userId);
   if (userErr || !userData?.user?.email) throw userErr ?? new Error("user has no email");
@@ -316,8 +368,10 @@ async function handleRelayPoll(body: { state?: string }) {
 
 // ---------------------------------------------------------------- background sync
 // Called by pg_cron every 10 seconds. Re-reads every linked officer's Discord roles and writes ONLY what changed
-// (name / rank / missing avatar), so nothing is rewritten on quiet ticks. People who left the server or lost every
-// mapped role are left alone here: their own page signs them out on its next check (action "sync").
+// (name / rank / missing avatar), so nothing is rewritten on quiet ticks.
+// People who left the server or lost every mapped role lose their access (see revokeAccess above), with a safety
+// valve: if a large share of everybody "disappears" in one run it is far more likely a Discord outage or a broken
+// role map than real departures, so nothing is revoked and the run is logged as an error instead.
 // A throttle slot makes sure the endpoint can not be hammered into Discord's rate limits.
 
 async function handleSyncAll() {
@@ -330,15 +384,27 @@ async function handleSyncAll() {
     .select("id, discord_id, name, rank, avatar_url").not("discord_id", "is", null);
   if (error) throw error;
 
+  // People already revoked are not asked about again (they come back through a normal sign-in).
+  // If the table does not exist yet (migration 20261026h not applied) revocation is simply switched off.
+  let revokedIds = new Set<string>();
+  let revocationEnabled = true;
+  const rev = await admin.from("access_revocations").select("profile_id");
+  if (rev.error) {
+    revocationEnabled = false;
+  } else {
+    revokedIds = new Set((rev.data ?? []).map((r: { profile_id: string }) => r.profile_id));
+  }
+
   let changed = 0;
-  const list = rows ?? [];
+  const lost: string[] = [];
+  const list = (rows ?? []).filter((p) => !revokedIds.has(p.id));
   for (let i = 0; i < list.length; i += 5) {
     await Promise.all(list.slice(i, i + 5).map(async (p) => {
       try {
         const member = await getMember(String(p.discord_id));
-        if (!member) return;
+        if (!member) { lost.push(p.id); return; }
         const rank = pickRank(map, member.roles ?? []);
-        if (!rank) return;
+        if (!rank) { lost.push(p.id); return; }
         const info = describe(member);
         const patch: Record<string, unknown> = {};
         if (info.name && info.name !== p.name) patch.name = info.name;
@@ -347,13 +413,31 @@ async function handleSyncAll() {
         if (Object.keys(patch).length === 0) return;
         const { error: upErr } = await admin.from("profiles").update(patch).eq("id", p.id);
         if (upErr) throw upErr;
+        if (patch.rank) await logRankChange(p.id, (patch.name as string | undefined) ?? p.name, p.rank, rank);
         changed++;
       } catch (e) {
         console.error("sync_all: profile", p.id, "failed:", e);
       }
     }));
   }
-  return { ok: true, checked: list.length, changed };
+
+  let revoked = 0;
+  if (revocationEnabled && lost.length > 0) {
+    const tooMany = list.length >= 4 && lost.length > Math.ceil(list.length / 2);
+    if (tooMany) {
+      console.error(`sync_all: ${lost.length} of ${list.length} people look gone at once; nobody was revoked (outage or role map problem?)`);
+    } else {
+      for (const id of lost) {
+        try {
+          await revokeAccess(id, "left the Discord server or lost every mapped role");
+          revoked++;
+        } catch (e) {
+          console.error("sync_all: revoke", id, "failed:", e);
+        }
+      }
+    }
+  }
+  return { ok: true, checked: list.length, changed, revoked };
 }
 
 async function handleSync(req: Request) {
