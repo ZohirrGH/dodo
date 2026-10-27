@@ -848,8 +848,6 @@ export default function SheriffApp() {
   const [authError, setAuthError] = useState(null);
   // Set when Discord returned to THIS browser but the login was started in another one (see startDiscordLogin)
   const [relayDone, setRelayDone] = useState(null);
-  // Same situation, before the person has confirmed that they really started the login: { code, state }
-  const [relayConfirm, setRelayConfirm] = useState(null);
   // True while we are coming back from Discord (?code=...) and exchanging it for a session
   const [exchanging, setExchanging] = useState(() => {
     try {
@@ -943,11 +941,16 @@ export default function SheriffApp() {
           return;
         }
         // The Discord app sent us to a different browser than the one where the login was started.
-        // The result goes to the tab that is waiting for it (it knows this state); this browser does not sign in.
-        // BUT only after the person confirms it: anybody can build a Discord link with a state of their own, and
-        // without this question a single click on such a link would hand the clicker's session to the attacker.
-        // The waiting tab shows the same short code (pairCode) that is shown here.
-        setRelayConfirm({ code, state });
+        // Hand the result to the tab that is waiting for it (it knows this state); this browser does not sign in.
+        const { error: relayErr } = await supabase.functions.invoke("discord-auth", {
+          body: { action: "relay_store", code, state, redirectUri: oauthRedirectUri() },
+        });
+        if (relayErr) {
+          setAuthError("Sign-in failed. Please try again.");
+          setExchanging(false);
+          return;
+        }
+        setRelayDone({ state });
         setExchanging(false);
         return;
       }
@@ -1099,24 +1102,6 @@ export default function SheriffApp() {
     setRelayDone(null);
     return null;
   };
-
-  // The person this browser belongs to confirms (or refuses) a login that was started elsewhere
-  const confirmRelay = async () => {
-    if (!relayConfirm) return "Nothing to confirm.";
-    const { error } = await supabase.functions.invoke("discord-auth", {
-      body: { action: "relay_store", code: relayConfirm.code, state: relayConfirm.state, redirectUri: oauthRedirectUri() },
-    });
-    if (error) return "Sign-in failed. Please try again.";
-    setRelayDone({ state: relayConfirm.state });
-    setRelayConfirm(null);
-    return null;
-  };
-  const cancelRelay = () => {
-    try { sessionStorage.setItem("gx_manual_login", "1"); } catch { /* ignore */ }
-    setRelayConfirm(null);
-  };
-
-  if (relayConfirm) return <RelayConfirm code={pairCode(relayConfirm.state)} onConfirm={confirmRelay} onCancel={cancelRelay} />;
 
   if (relayDone) return <RelayDone onClaim={claimHere} />;
 
@@ -1392,9 +1377,8 @@ const oauthRedirectUri = () => window.location.origin + window.location.pathname
 // result over through the discord-auth function (relay_store), and this tab collects it (relay_poll).
 // If the app does not take focus within 4 seconds (not installed / blocked), it falls back to the normal
 // browser page, which signs in on this same tab.
-//   onWaiting(state): the app was opened and we are waiting     onError(message): the login failed or timed out
+//   onWaiting(): the app was opened and we are waiting     onError(message): the login failed or timed out
 //   forceWeb: skip the app and use the browser page
-// The waiting tab shows pairCode(state); the browser that Discord returns to asks the person to confirm the same code.
 function startDiscordLogin({ onWaiting, onError, forceWeb = false } = {}) {
   let state = "";
   try {
@@ -1418,7 +1402,7 @@ function startDiscordLogin({ onWaiting, onError, forceWeb = false } = {}) {
   const isDesktop = !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
   if (forceWeb || !isDesktop || !state) { window.location.href = webUrl; return; }
 
-  onWaiting?.(state);
+  onWaiting?.();
   waitForDiscordApp(state, webUrl, onError);
   window.location.href = `discord://-/oauth2/authorize?${params.toString()}`;
 }
@@ -1486,12 +1470,11 @@ const GATE_MESSAGES = {
 // This screen only shows while we wait for Discord, after a sign-out, or when access is refused.
 function DiscordGate({ busy, error, autoStart }) {
   const [appWait, setAppWait] = useState(false);       // the Discord app was opened, waiting for the approval
-  const [appCode, setAppCode] = useState("");          // short code the other browser asks the person to confirm
   const [localError, setLocalError] = useState(null);  // login failed / timed out while waiting
   const begin = useCallback(() => {
     setLocalError(null);
     startDiscordLogin({
-      onWaiting: (state) => { setAppCode(pairCode(state)); setAppWait(true); },
+      onWaiting: () => setAppWait(true),
       onError: (msg) => { setAppWait(false); setLocalError(msg); },
     });
   }, []);
@@ -1510,13 +1493,6 @@ function DiscordGate({ busy, error, autoStart }) {
             <div style={styles.loginSub}>
               {appWait ? "Approve the login in the Discord app, then come back to this tab. It signs you in by itself." : "Signing you in with Discord..."}
             </div>
-            {appWait && appCode && (
-              <div style={{ textAlign: "center", marginTop: -8 }}>
-                <div style={{ fontSize: 12, color: "#8A8579" }}>Confirmation code</div>
-                <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 34, letterSpacing: 8, color: "#F4C744", direction: "ltr" }}>{appCode}</div>
-                <div style={{ fontSize: 12, color: "#8A8579", marginTop: 4 }}>If another browser asks you to confirm this sign-in, the code must be the same.</div>
-              </div>
-            )}
             {appWait && (
               <button className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", marginTop: 16 }} onClick={() => startDiscordLogin({ forceWeb: true })}>
                 Use the browser instead
@@ -1531,43 +1507,6 @@ function DiscordGate({ busy, error, autoStart }) {
             </button>
           </>
         )}
-      </div>
-    </div>
-  );
-}
-
-// Four characters derived from the secret state of a login. The tab that started the login shows them, and the
-// browser that Discord returns to asks the person to confirm the same ones (see RelayConfirm).
-const pairCode = (state) => String(state || "").replace(/-/g, "").slice(0, 4).toUpperCase();
-
-// Shown in a browser that Discord returned to while the login was started in another one: nothing is handed over
-// until the person says "yes, I started it". Somebody who never started a login sees a code they do not know.
-function RelayConfirm({ code, onConfirm, onCancel }) {
-  const [msg, setMsg] = useState(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <div style={styles.loginPage}>
-      <style>{FONTS}</style>
-      <div style={styles.loginGrid} />
-      <div className="gx-glass-card gx-fade-up" style={styles.loginCard}>
-        <img src={badgeLogo} alt="GXPD Badge" className="gx-logo-badge" style={{ width: 64, height: 64, objectFit: "contain" }} />
-        <div style={styles.loginTitle}>CONFIRM SIGN-IN</div>
-        <div style={styles.loginSub}>Did you just start a Discord login in another browser tab or device? That screen shows this code:</div>
-        <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 44, letterSpacing: 10, color: "#F4C744", direction: "ltr", marginBottom: 16 }}>{code}</div>
-        <div style={{ fontSize: 12, color: "#E0776A", textAlign: "center", lineHeight: 1.6 }}>
-          If you did not start a login yourself, or the code is different, press Cancel: someone may be trying to sign in as you.
-        </div>
-        {msg && <div style={{ color: "#E0776A", fontSize: 13, margin: "10px 0", textAlign: "center" }}>{msg}</div>}
-        <button
-          className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, width: "100%", justifyContent: "center", marginTop: 18 }}
-          disabled={busy}
-          onClick={async () => { setBusy(true); setMsg(await onConfirm()); setBusy(false); }}
-        >
-          {busy ? "..." : "Yes, that is me — continue"}
-        </button>
-        <button className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, width: "100%", justifyContent: "center", marginTop: 10 }} disabled={busy} onClick={onCancel}>
-          Cancel
-        </button>
       </div>
     </div>
   );
