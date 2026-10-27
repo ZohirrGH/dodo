@@ -8,7 +8,7 @@ create table if not exists public.duty_sessions (
 );
 alter table public.duty_sessions enable row level security;  -- no policies: only the functions below touch it
 
-create or replace function public.duty_tz() returns text language sql immutable
+create or replace function public.duty_tz() returns text language sql immutable set search_path to ''
 as $$ select 'Africa/Algiers'::text $$;
 
 create or replace function public.duty_window_open(p_at timestamptz default now())
