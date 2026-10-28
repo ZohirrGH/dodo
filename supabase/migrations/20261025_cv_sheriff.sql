@@ -41,8 +41,8 @@ grant execute on function public.is_galaxy_citizen() to authenticated;
 -- Discord role GALAXY CITIZEN -> rank Galaxy Citizen. Priority 0 is below every officer rank (they start at 1),
 -- so someone who is both a citizen and an officer keeps the officer rank.
 insert into public.discord_role_map (discord_role_id, rank, priority)
-select '1563459942785097798', 'Galaxy Citizen', 0
-where not exists (select 1 from public.discord_role_map where discord_role_id = '1563459942785097798');
+select '1361889474325250249', 'Galaxy Citizen', 0
+where not exists (select 1 from public.discord_role_map where discord_role_id = '1361889474325250249');
 
 -- 2) Rules: public / staff chapters ----------------------------------------------------------------
 do $$

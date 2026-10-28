@@ -25,7 +25,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const DISCORD_BOT_TOKEN = Deno.env.get("DISCORD_BOT_TOKEN")!;
 const DISCORD_GUILD_ID = Deno.env.get("DISCORD_GUILD_ID")!;
-const ACCEPTED_ROLE_ID = Deno.env.get("ACCEPTED_ROLE_ID") ?? "1563459824509784144";
+const ACCEPTED_ROLE_ID = Deno.env.get("ACCEPTED_ROLE_ID") ?? "1491121375270801518";
 
 const DISCORD_API = "https://discord.com/api/v10";
 
