@@ -17,7 +17,7 @@ const BACKGROUND_VIDEO_URL = backgroundVideo;
 const BACKGROUND_VIDEO_TYPE = "video/mp4";
 
 
-const DISCORD_INVITE_URL = "https://discord.gg/tWwmV44dhE";
+const DISCORD_INVITE_URL = "https://discord.gg/uh3RZ5u8xn";
 
 const FONTS = `
 @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
