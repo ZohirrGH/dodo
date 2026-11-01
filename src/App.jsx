@@ -602,9 +602,18 @@ const RANKS = [
 // People who are only citizens in the Discord server (role GALAXY CITIZEN). They are not officers:
 // they see the Rules (public chapters) and CV Sheriff rooms only, and are left out of every officer list.
 const CITIZEN_RANK = "Galaxy Citizen";
-const ALL_RANKS = [...RANKS, CITIZEN_RANK];   // permissions room; RANKS stays "officers only"
 const CHIEF_RANK = "Chef Sheriff";
 const isChief = (rank) => rank === CHIEF_RANK;
+// Chef Sheriff and Management have every room and every permission, can open the permissions room, create roles and
+// delete accounts. The database enforces the same (is_admin(), has_perm(), has_room()).
+const ADMIN_RANKS = [CHIEF_RANK, "Management"];
+const isAdmin = (rank) => ADMIN_RANKS.includes(rank);
+// Roles made from the permissions room (table custom_ranks). Filled right after sign-in, together with the permissions.
+// RANKS stays the built-in officer ranks; officerRanks() adds the custom ones, allRanks() also adds the citizens.
+let CUSTOM_RANKS = [];
+const setCustomRanks = (names) => { CUSTOM_RANKS = [...(names || [])].sort((a, b) => a.localeCompare(b)); };
+const officerRanks = () => [...RANKS, ...CUSTOM_RANKS];
+const allRanks = () => [...RANKS, ...CUSTOM_RANKS, CITIZEN_RANK];
 
 // ---------------------------------------------------------------------------
 // Permissions
@@ -700,15 +709,15 @@ const DEFAULT_MANAGEMENT_RANKS = [
 ];
 
 function defaultActionsFor(rank) {
-  if (rank === CITIZEN_RANK) {
-    // citizens can do nothing except send their CV
+  if (rank === CITIZEN_RANK || CUSTOM_RANKS.includes(rank)) {
+    // citizens can do nothing except send their CV; a brand new custom role starts with nothing at all
     const none = (keys) => Object.fromEntries(keys.map((k) => [k, false]));
     const rec = ["create", "edit_own", "edit_all", "delete_own", "delete_all"];
     return {
       operations: none(rec), wanted: none(rec), tests: none(rec), dispatch: none(["create", "edit_own", "delete_own"]),
       uniform: none([...rec, "reorder"]), rules: none([...rec, "reorder"]), leaderboard: none(["manage"]), vacations: none(["create", "review"]),
       duty: none(["edit_all", "delete_all", "stop_all"]),
-      cv: { create: true, review: false },
+      cv: { create: rank === CITIZEN_RANK, review: false },
     };
   }
   const management = DEFAULT_MANAGEMENT_RANKS.includes(rank);
@@ -739,6 +748,10 @@ function defaultPermsFor(rank) {
   if (rank === CITIZEN_RANK) {
     return { actions: defaultActionsFor(rank), rooms: { rules: true, cv: true } };
   }
+  if (CUSTOM_RANKS.includes(rank)) {
+    // same starting point the manage-roles function stores for a new role
+    return { actions: defaultActionsFor(rank), rooms: { dashboard: true, rules: true } };
+  }
   const management = DEFAULT_MANAGEMENT_RANKS.includes(rank);
   const writeAdvanced = !["Deputy", "Deputy First Class"].includes(rank);
   return {
@@ -761,8 +774,8 @@ const setRankPerms = (rank, perms) => { PERMS = { ...PERMS, [rank]: perms }; };
 
 function getPerms(rank) {
   const base = defaultPermsFor(rank);
-  // The Chef Sheriff is never locked out of anything, whatever is stored
-  if (isChief(rank)) {
+  // The Chef Sheriff and Management are never locked out of anything, whatever is stored
+  if (isAdmin(rank)) {
     return {
       actions: Object.fromEntries(Object.entries(base.actions).map(([room, a]) => [room, Object.fromEntries(Object.keys(a).map((k) => [k, true]))])),
       rooms: Object.fromEntries(ROOMS.map((r) => [r.key, true])),
@@ -893,9 +906,15 @@ export default function SheriffApp() {
   // Role permissions (rooms + capabilities per rank). On any failure we keep the built-in defaults.
   const loadPerms = useCallback(async (id) => {
     try {
-      const { data, error } = await supabase.from("role_permissions").select("rank, rooms, actions");
-      if (error) console.error("permissions error:", error);
-      else applyPerms(data);
+      const [perms, custom] = await Promise.all([
+        supabase.from("role_permissions").select("rank, rooms, actions"),
+        supabase.from("custom_ranks").select("name"),
+      ]);
+      // custom roles first: their starting permissions depend on knowing they are custom.
+      // If the table does not exist yet (migration 20261101 not applied) the list simply stays empty.
+      if (!custom.error) setCustomRanks((custom.data || []).map((r) => r.name));
+      if (perms.error) console.error("permissions error:", perms.error);
+      else applyPerms(perms.data);
     } catch (e) {
       console.error("permissions error:", e);
     }
@@ -1134,10 +1153,10 @@ export default function SheriffApp() {
 
   const management = can(profile.rank, "vacations", "review");
 
-  // Rooms in the side menu come from the role permissions; the permissions room is always Chef Sheriff only
+  // Rooms in the side menu come from the role permissions; the permissions room is always Chef Sheriff + Management only
   const navItems = [
     ...ROOMS.filter((r) => canSeeRoom(profile.rank, r.key)),
-    ...(isChief(profile.rank) ? [{ key: "permissions", label: "permissions", icon: Lock }] : []),
+    ...(isAdmin(profile.rank) ? [{ key: "permissions", label: "permissions", icon: Lock }] : []),
   ];
 
   // If the room being viewed was just hidden from this rank, fall back to the first room that is still visible
@@ -1234,7 +1253,7 @@ export default function SheriffApp() {
             {currentView === "cv" && canSeeRoom(profile.rank, "cv") && <CvView me={profile} showToast={showToast} />}
             {currentView === "activity" && canSeeRoom(profile.rank, "activity") && <ActivityLogView onOpenProfile={openProfile} />}
             {currentView === "presence" && canSeeRoom(profile.rank, "presence") && <PresenceView me={profile} showToast={showToast} onOpenProfile={openProfile} />}
-            {currentView === "permissions" && isChief(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} />}
+            {currentView === "permissions" && isAdmin(profile.rank) && <PermissionsView me={profile} showToast={showToast} onSaved={() => setPermsTick((t) => t + 1)} reloadPerms={() => loadPerms(profile.id)} />}
           </div>
 
           <SiteFooter />
@@ -1927,15 +1946,132 @@ function Toggle({ on, disabled, onClick, label }) {
   );
 }
 
-// Chef Sheriff only: choose, rank by rank, which rooms are visible and what the rank is allowed to do.
-function PermissionsView({ me, showToast, onSaved }) {
-  const firstEditable = RANKS.find((r) => !isChief(r));
+// Calls one of the admin edge functions (manage-roles, delete-officer) as the signed-in person.
+// The functions answer errors with plain text, so that text becomes the error message.
+async function invokeAdminFunction(name, body) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const { data, error } = await supabase.functions.invoke(name, {
+    body,
+    headers: { Authorization: `Bearer ${session?.access_token}` },
+  });
+  if (error) {
+    let reason = "";
+    try { reason = await error.context?.text?.(); } catch (_) { /* ignore */ }
+    throw new Error(reason || "The request failed");
+  }
+  return data;
+}
+
+// Chef Sheriff + Management: choose, rank by rank, which rooms are visible and what the rank is allowed to do.
+// Also: create / link / delete custom roles, and delete all accounts.
+function PermissionsView({ me, showToast, onSaved, reloadPerms }) {
+  const firstEditable = RANKS.find((r) => !isAdmin(r));
   const [selected, setSelected] = useState(firstEditable);
   const [draft, setDraft] = useState(() => getPerms(firstEditable));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const locked = isChief(selected);
+  // custom roles
+  const [roleInfo, setRoleInfo] = useState({});          // name -> { discordRoleId, priority, members }
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDiscordId, setNewDiscordId] = useState("");
+  const [newPriority, setNewPriority] = useState("1");
+  const [creating, setCreating] = useState(false);
+  const [linkId, setLinkId] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [deletingRole, setDeletingRole] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+
+  const locked = isAdmin(selected);
+  const isCustom = CUSTOM_RANKS.includes(selected);
+  const info = roleInfo[selected];
+
+  const loadRoleInfo = useCallback(async () => {
+    try {
+      const r = await invokeAdminFunction("manage-roles", { action: "list" });
+      const next = {};
+      (r?.roles || []).forEach((x) => { next[x.name] = x; });
+      setRoleInfo(next);
+    } catch (e) {
+      console.error("roles list error:", e);
+    }
+  }, []);
+
+  useEffect(() => { loadRoleInfo(); }, [loadRoleInfo]);
+  useEffect(() => { setLinkId(roleInfo[selected]?.discordRoleId || ""); }, [selected, roleInfo]);
+
+  const createRole = async (e) => {
+    e.preventDefault();
+    if (creating) return;
+    const name = newName.trim().replace(/\s+/g, " ");
+    if (name.length < 2) { showToast("error", "Type a name for the role"); return; }
+    setCreating(true);
+    try {
+      await invokeAdminFunction("manage-roles", {
+        action: "create", name, discordRoleId: newDiscordId.trim(), priority: Number(newPriority) || 1,
+      });
+      await reloadPerms();
+      await loadRoleInfo();
+      setSelected(name);
+      setDraft(getPerms(name));
+      setDirty(false);
+      setShowCreate(false);
+      setNewName(""); setNewDiscordId(""); setNewPriority("1");
+      showToast("success", `Role ${name} created`);
+    } catch (err) {
+      showToast("error", err.message);
+    }
+    setCreating(false);
+  };
+
+  const linkRole = async () => {
+    if (linking) return;
+    if (info?.members > 0 && linkId.trim() !== (info.discordRoleId || "")
+        && !window.confirm(`${info.members} people have this role. Anybody who does not also have the new Discord role will lose access. Continue?`)) return;
+    setLinking(true);
+    try {
+      await invokeAdminFunction("manage-roles", { action: "link", name: selected, discordRoleId: linkId.trim() });
+      await loadRoleInfo();
+      showToast("success", linkId.trim() ? "Discord role linked" : "Discord role unlinked");
+    } catch (err) {
+      showToast("error", err.message);
+    }
+    setLinking(false);
+  };
+
+  const deleteRole = async () => {
+    if (deletingRole) return;
+    if (!window.confirm(`Delete the role ${selected}? Its permissions are removed too.`)) return;
+    setDeletingRole(true);
+    try {
+      await invokeAdminFunction("manage-roles", { action: "delete", name: selected });
+      await reloadPerms();
+      await loadRoleInfo();
+      setSelected(firstEditable);
+      setDraft(getPerms(firstEditable));
+      setDirty(false);
+      showToast("success", "Role deleted");
+    } catch (err) {
+      showToast("error", err.message);
+    }
+    setDeletingRole(false);
+  };
+
+  const deleteAllAccounts = async () => {
+    if (deletingAll) return;
+    if (!window.confirm("Delete ALL accounts?\n\nEvery account except yours is removed, with its hours, logs and history. This cannot be undone.")) return;
+    const typed = window.prompt("Type DELETE ALL ACCOUNTS to confirm");
+    if (typed !== "DELETE ALL ACCOUNTS") { showToast("error", "Cancelled: the text did not match"); return; }
+    setDeletingAll(true);
+    try {
+      const r = await invokeAdminFunction("delete-officer", { all: true, confirm: "DELETE ALL ACCOUNTS" });
+      showToast("success", `Deleted ${r?.deleted ?? 0} accounts${r?.failed ? `, ${r.failed} failed` : ""}`);
+    } catch (err) {
+      showToast("error", err.message);
+    }
+    setDeletingAll(false);
+  };
 
   const pick = (rank) => {
     if (rank === selected) return;
@@ -1989,26 +2125,93 @@ function PermissionsView({ me, showToast, onSaved }) {
   return (
     <div style={styles.content}>
       <div style={styles.filterRow}>
-        {ALL_RANKS.map((r) => (
+        {allRanks().map((r) => (
           <button
             key={r}
             className="gx-btn gx-filter-btn"
             style={{ ...styles.filterBtn, ...(selected === r ? styles.filterBtnActive : {}) }}
             onClick={() => pick(r)}
           >
-            {isChief(r) && <Lock size={11} style={{ marginInlineEnd: 6, verticalAlign: "-1px" }} />}
+            {isAdmin(r) && <Lock size={11} style={{ marginInlineEnd: 6, verticalAlign: "-1px" }} />}
             {r}
           </button>
         ))}
+        <button
+          className="gx-btn gx-filter-btn"
+          style={{ ...styles.filterBtn, borderColor: "rgba(212,167,44,0.5)", color: "#F4C744" }}
+          onClick={() => setShowCreate((v) => !v)}
+        >
+          {showCreate ? "× Close" : "+ Create role"}
+        </button>
       </div>
+
+      {showCreate && (
+        <form className="gx-glass-card" style={{ ...styles.sectionCard, marginBottom: 16 }} onSubmit={createRole}>
+          <div style={styles.sectionHeader}>Create a new role</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+            <div>
+              <label style={styles.label}>Role name</label>
+              <input style={styles.input} placeholder="e.g., Trainer" maxLength={40} autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} />
+            </div>
+            <div>
+              <label style={styles.label}>Discord role ID (optional)</label>
+              <input style={styles.input} inputMode="numeric" placeholder="e.g., 1361889474325250249" value={newDiscordId} onChange={(e) => setNewDiscordId(e.target.value)} />
+            </div>
+            <div>
+              <label style={styles.label}>Priority</label>
+              <input style={styles.input} type="number" min="0" max="100" value={newPriority} onChange={(e) => setNewPriority(e.target.value)} />
+            </div>
+          </div>
+          <div style={{ color: "#8A8579", fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+            The new role starts with the dashboard and rules rooms only; open more below once it is created. To get the Discord role ID:
+            Discord → Server Settings → Roles → right-click the role → Copy Role ID (turn on Developer Mode in Discord's Advanced settings first).
+            People who have that Discord role get this role on the site within seconds. If someone has several roles, the higher priority wins.
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+            <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, ...(creating ? { opacity: 0.55, cursor: "not-allowed" } : {}) }} disabled={creating}>
+              {creating ? "Creating..." : "Create role"}
+            </button>
+            <button type="button" className="gx-btn gx-btn-ghost" style={styles.btnGhost} onClick={() => setShowCreate(false)} disabled={creating}>Cancel</button>
+          </div>
+        </form>
+      )}
 
       <div className="gx-glass-card" style={styles.sectionCard}>
         <div style={styles.miniName}>{selected}</div>
         <div style={{ color: "#8A8579", fontSize: 12, marginTop: 6, lineHeight: 1.6 }}>
           {locked
-            ? "The Chef Sheriff always has every room and every permission, so this rank cannot be locked out."
+            ? "The Chef Sheriff and Management always have every room and every permission, so these ranks cannot be locked out."
             : "These settings control what this rank sees and can do. The server enforces the same switches, so a change here applies everywhere the moment you save."}
         </div>
+
+        {isCustom && (
+          <div style={{ marginTop: 16 }}>
+            <label style={styles.label}>Discord role ID{info ? ` · ${info.members} member${info.members === 1 ? "" : "s"}` : ""}</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                style={{ ...styles.input, flex: 1, minWidth: 200 }}
+                inputMode="numeric"
+                placeholder="Paste the Discord role ID (empty = not linked)"
+                value={linkId}
+                onChange={(e) => setLinkId(e.target.value)}
+              />
+              <button className="gx-btn gx-btn-gold" style={{ ...styles.btnGold, ...(linking ? { opacity: 0.55, cursor: "not-allowed" } : {}) }} onClick={linkRole} disabled={linking}>
+                {linking ? "..." : "Save link"}
+              </button>
+              <button
+                className="gx-btn gx-btn-ghost"
+                style={{ ...styles.btnGhost, borderColor: "rgba(194,75,63,0.4)", color: "#E0776A" }}
+                onClick={deleteRole}
+                disabled={deletingRole}
+              >
+                {deletingRole ? "..." : "Delete role"}
+              </button>
+            </div>
+            {info && !info.discordRoleId && (
+              <div style={{ color: "#F4C744", fontSize: 11, marginTop: 6 }}>Not linked to a Discord role yet, so nobody can get this role.</div>
+            )}
+          </div>
+        )}
 
         <div style={{ ...styles.label, marginTop: 20 }}>Rooms (side menu)</div>
         <div style={styles.rankList}>
@@ -2062,6 +2265,22 @@ function PermissionsView({ me, showToast, onSaved }) {
             </button>
           </div>
         )}
+      </div>
+
+      <div className="gx-glass-card" style={{ ...styles.sectionCard, marginTop: 16, border: "1px solid rgba(194,75,63,0.4)" }}>
+        <div style={styles.sectionHeader}>Danger zone</div>
+        <div style={{ color: "#8A8579", fontSize: 12, lineHeight: 1.6 }}>
+          Deletes every account except yours{isChief(me.rank) ? "" : " (Chef Sheriff accounts are kept)"}, with all their hours, logs and history.
+          People who sign in with Discord again get a fresh, empty account.
+        </div>
+        <button
+          className="gx-btn gx-btn-ghost"
+          style={{ ...styles.btnGhost, marginTop: 14, borderColor: "rgba(194,75,63,0.4)", color: "#E0776A" }}
+          onClick={deleteAllAccounts}
+          disabled={deletingAll}
+        >
+          {deletingAll ? "Deleting..." : "Delete all accounts"}
+        </button>
       </div>
     </div>
   );
@@ -2468,7 +2687,7 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
   // typing hours by hand: officers add their own; editing an existing log follows the permissions room
   const showLogForm = editingLogId ? canEditLogs : (isOwn && me.rank !== "Galaxy Citizen");
   const canDeleteLogs = isOwn || can(me.rank, "duty", "delete_all");
-  const iAmChief = isChief(me.rank);
+  const iAmAdmin = isAdmin(me.rank);
   const canSeeDispatch = canSeeRoom(me.rank, "dispatch");
 
   const load = useCallback(() => {
@@ -2604,9 +2823,9 @@ function ProfileView({ profileId, me, showToast, onDeleted }) {
         )}
       </div>
 
-      {iAmChief && !isOwn && (
+      {iAmAdmin && !isOwn && (isChief(me.rank) || !isChief(officer.rank)) && (
         <div className="gx-glass-card" style={{ ...styles.sectionCard, marginTop: 16, border: "1px solid rgba(212,167,44,0.3)" }}>
-          <div style={styles.sectionHeader}>Chief Sheriff Control Panel</div>
+          <div style={styles.sectionHeader}>Admin Control Panel</div>
           <div style={{ color: "#8A8579", fontSize: 12 }}>Ranks are managed from Discord: change the person's role there and the site follows within seconds.</div>
           <button
             className="gx-btn gx-btn-ghost" style={{ ...styles.btnGhost, marginTop: 14, borderColor: "rgba(194,75,63,0.4)", color: "#E0776A" }}
@@ -3821,7 +4040,7 @@ function WeeklyTableView({ me, onOpenProfile }) {
       });
 
       const grouped = {};
-      RANKS.forEach((r) => { grouped[r] = []; });
+      officerRanks().forEach((r) => { grouped[r] = []; });
       (officers || []).forEach((o) => {
         if (!grouped[o.rank]) grouped[o.rank] = [];
         grouped[o.rank].push({ ...o, weekHours: weekTotals[o.id] || 0 });
@@ -3846,7 +4065,7 @@ function WeeklyTableView({ me, onOpenProfile }) {
     let rowNum = 0;
     const rows = [];
 
-    RANKS.forEach((rank) => {
+    officerRanks().forEach((rank) => {
       const list = byRank[rank] || [];
       if (list.length === 0) return;
 
@@ -3938,7 +4157,7 @@ function WeeklyTableView({ me, onOpenProfile }) {
         <div style={{ color: "#8A8579", fontSize: 12 }}>
           Current Week (Sunday → Sunday): {weekLabel}
         </div>
-        {isChief(me?.rank) && (
+        {isAdmin(me?.rank) && (
           <button
             className="gx-btn gx-btn-ghost"
             style={{ ...styles.btnGhost, padding: "6px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}
@@ -3949,7 +4168,7 @@ function WeeklyTableView({ me, onOpenProfile }) {
           </button>
         )}
       </div>
-      {RANKS.map((rank) => {
+      {officerRanks().map((rank) => {
         const list = byRank[rank] || [];
         if (list.length === 0) return null;
         return (

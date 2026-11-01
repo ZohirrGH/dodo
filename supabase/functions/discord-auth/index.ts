@@ -97,32 +97,45 @@ async function loadRoleMap(): Promise<RoleMapRow[]> {
   return (data ?? []) as RoleMapRow[];
 }
 
+// Built-in ranks plus the roles created from the website's Permissions room (table custom_ranks).
+// If that table does not exist yet (migration 20261101 not applied) only the built-in ranks are valid.
+async function loadValidRanks(): Promise<Set<string>> {
+  const valid = new Set<string>(VALID_RANKS);
+  const { data, error } = await admin.from("custom_ranks").select("name");
+  if (!error) (data ?? []).forEach((r: { name: string }) => valid.add(r.name));
+  return valid;
+}
+
 // Highest priority wins when someone has several mapped roles
-function pickRank(map: RoleMapRow[], roleIds: string[]): string | null {
+function pickRank(map: RoleMapRow[], roleIds: string[], valid: Set<string>): string | null {
   const mine = new Set(roleIds);
   let best: { rank: string; priority: number } | null = null;
   for (const row of map) {
     if (!mine.has(String(row.discord_role_id))) continue;
-    if (!VALID_RANKS.includes(row.rank)) continue;
+    if (!valid.has(row.rank)) continue;
     if (!best || row.priority > best.priority) best = { rank: row.rank, priority: row.priority };
   }
   return best?.rank ?? null;
 }
 
 async function resolveRank(roleIds: string[]): Promise<string | null> {
-  return pickRank(await loadRoleMap(), roleIds);
+  const [map, valid] = await Promise.all([loadRoleMap(), loadValidRanks()]);
+  return pickRank(map, roleIds, valid);
 }
 
 // Server nickname -> display name + badge number.
-// "[835] Mehdi Viper", "835 | Mehdi Viper" and "Mehdi Viper 835" all give name "Mehdi Viper", badge "835".
+// The server format is "[820] Lakhdar Bounawara" (badge 820). A number in square brackets always wins.
+// Older styles still work: "835 | Mehdi Viper" and "Mehdi Viper 835" give name "Mehdi Viper", badge "835".
 export function parseNick(raw: string): { name: string; badge: string | null } {
   const text = (raw ?? "").trim();
-  const m = text.match(/\d{2,5}/);
-  const badge = m ? m[0] : null;
+  const bracket = text.match(/\[\s*(\d{1,6})\s*\]/);
+  const loose = text.match(/\d{2,5}/);
+  const badge = bracket ? bracket[1] : loose ? loose[0] : null;
   let name = text;
   if (badge) {
+    const marker = bracket ? /\[\s*\d{1,6}\s*\]/ : /[\[\(]?\s*\d{2,5}\s*[\]\)]?/;
     name = text
-      .replace(/[\[\(]?\s*\d{2,5}\s*[\]\)]?/, "")
+      .replace(marker, "")
       .replace(/^[\s|:.\-–—]+|[\s|:.\-–—]+$/g, "")
       .trim();
   }
@@ -145,13 +158,44 @@ function describe(member: Member) {
 
 async function updateLinkedProfile(profileId: string, member: Member, rank: string) {
   const info = describe(member);
-  const { data: current } = await admin.from("profiles").select("avatar_url, rank, name").eq("id", profileId).single();
+  const { data: current } = await admin.from("profiles").select("avatar_url, rank, name, badge, username").eq("id", profileId).single();
   const patch: Record<string, unknown> = { name: info.name, rank };
   // never overwrite a picture the officer uploaded themselves
   if (!current?.avatar_url && info.avatar) patch.avatar_url = info.avatar;
   const { error } = await admin.from("profiles").update(patch).eq("id", profileId);
   if (error) throw error;
   await logRankChange(profileId, info.name, current?.rank ?? null, rank);
+  await syncBadge(profileId, current ?? {}, info.badge);
+}
+
+// The badge number lives in the Discord server nickname: "[820] Lakhdar Bounawara" -> badge 820.
+// This copies it to the profile whenever it differs. It never blocks the name / rank update, and it changes nothing when
+// the nickname has no number, the number is already the same, or another officer already owns that number
+// (badge is unique, and members can edit their own nickname, so a copied number must not steal somebody else's badge).
+// Returns true when the badge was changed.
+async function syncBadge(
+  profileId: string,
+  current: { badge?: string | null; username?: string | null },
+  badge: string | null,
+): Promise<boolean> {
+  if (!badge || badge === current.badge) return false;
+  try {
+    const { data: clash, error: clashErr } = await admin.from("profiles").select("id").eq("badge", badge).neq("id", profileId).limit(1);
+    if (clashErr) throw clashErr;
+    if (clash && clash.length > 0) {
+      console.error(`syncBadge: badge ${badge} is already used by another account, profile ${profileId} keeps ${current.badge}`);
+      return false;
+    }
+    const patch: Record<string, unknown> = { badge };
+    // Discord-created accounts use the badge as their username too; keep the two equal
+    if (!current.username || current.username === current.badge) patch.username = badge;
+    const { error } = await admin.from("profiles").update(patch).eq("id", profileId);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error("syncBadge failed:", profileId, e);
+    return false;
+  }
 }
 
 // Ranks now change only through Discord, so the activity log records those changes here
@@ -380,8 +424,9 @@ async function handleSyncAll() {
   if (!slot) return { ok: true, skipped: "throttled" };
 
   const map = await loadRoleMap();
+  const validRanks = await loadValidRanks();
   const { data: rows, error } = await admin.from("profiles")
-    .select("id, discord_id, name, rank, avatar_url").not("discord_id", "is", null);
+    .select("id, discord_id, name, rank, avatar_url, badge, username").not("discord_id", "is", null);
   if (error) throw error;
 
   // People already revoked are not asked about again (they come back through a normal sign-in).
@@ -403,18 +448,23 @@ async function handleSyncAll() {
       try {
         const member = await getMember(String(p.discord_id));
         if (!member) { lost.push(p.id); return; }
-        const rank = pickRank(map, member.roles ?? []);
+        const rank = pickRank(map, member.roles ?? [], validRanks);
         if (!rank) { lost.push(p.id); return; }
         const info = describe(member);
         const patch: Record<string, unknown> = {};
         if (info.name && info.name !== p.name) patch.name = info.name;
         if (rank !== p.rank) patch.rank = rank;
         if (!p.avatar_url && info.avatar) patch.avatar_url = info.avatar;
-        if (Object.keys(patch).length === 0) return;
-        const { error: upErr } = await admin.from("profiles").update(patch).eq("id", p.id);
-        if (upErr) throw upErr;
-        if (patch.rank) await logRankChange(p.id, (patch.name as string | undefined) ?? p.name, p.rank, rank);
-        changed++;
+        let didChange = false;
+        if (Object.keys(patch).length > 0) {
+          const { error: upErr } = await admin.from("profiles").update(patch).eq("id", p.id);
+          if (upErr) throw upErr;
+          if (patch.rank) await logRankChange(p.id, (patch.name as string | undefined) ?? p.name, p.rank, rank);
+          didChange = true;
+        }
+        // badge number from the nickname "[820] Name"
+        if (await syncBadge(p.id, p, info.badge)) didChange = true;
+        if (didChange) changed++;
       } catch (e) {
         console.error("sync_all: profile", p.id, "failed:", e);
       }
